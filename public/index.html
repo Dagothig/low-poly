@@ -1,0 +1,71 @@
+<html>
+    <head>
+        <meta charset="utf-8"></meta>
+        <title>Low-poly</title>
+        <style>
+            html, body {
+                margin: 0;
+                body: 0;
+            }
+            canvas {
+                position: absolute;
+                width: 100%;
+                height: 100%;
+
+                image-rendering: -moz-crisp-edges;
+                image-rendering: -o-crisp-edges;
+                /* Webkit (non-standard naming) */
+                image-rendering: -webkit-optimize-contrast;
+                image-rendering: crisp-edges;
+                /* IE (non-standard property) */
+                -ms-interpolation-mode: nearest-neighbor;
+            }
+        </style>
+    </head>
+    <body>
+        <script src="js/three.js"></script>
+
+        <script src="js/copy-shader.js"></script>
+        <script id="vertShader" type="x-shader/x-vertex">
+            varying vec2 vUv;
+
+            void main() {
+                vUv = uv;
+                gl_Position =
+                    projectionMatrix *
+                    modelViewMatrix *
+                    vec4(position, 1.0);
+            }
+        </script>
+        <script id="fragShader" type="x-shader/x-vertex">
+            uniform sampler2D tDiffuse;
+            uniform vec2 resolution;
+            uniform float colSpace;
+            uniform float pixelSize;
+
+            varying vec2 vUv;
+
+            vec2 sample() {
+                return floor(vUv * resolution / pixelSize + 0.5) /
+                    (resolution / pixelSize);
+            }
+
+            vec4 limitCol(vec4 col) {
+                return floor(col * colSpace + 0.5) / colSpace;
+            }
+
+            void main() {
+                vec4 col = texture2D(tDiffuse, sample());
+                gl_FragColor = limitCol(col);
+            }
+        </script>
+
+        <script src="js/effect-composer.js"></script>
+
+        <script src="js/shader-pass.js"></script>
+        <script src="js/mask-pass.js"></script>
+        <script src="js/render-pass.js"></script>
+
+        <script src="js/main.js"></script>
+    </body>
+</html>

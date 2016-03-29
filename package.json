@@ -1,0 +1,11 @@
+{
+  "name": "Low-poly",
+  "version": "0.0.0",
+  "author": "Dagothig <guillaumenoelmartel@gmail.com>",
+  "description": "Low-poly first-person limited colors test",
+  "dependencies": {},
+  "devDependencies": {
+    "gulp": "^3.9.1",
+    "gulp-typescript": "^2.12.1"
+  }
+}

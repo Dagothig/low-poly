@@ -1,0 +1,10 @@
+{
+    "compilerOptions": {
+        "outFile": "main.js",
+        "target": "es5"
+    },
+    "files": [
+        "client/lib/three.d.ts",
+        "client/main.ts"
+    ]
+}
