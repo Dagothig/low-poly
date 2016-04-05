@@ -228,20 +228,20 @@ var geo;
             // with a_1 = [a_11, a_12], a_2 = [a_21, a_22]
             // Then we are wondering about the linear equation
             // c_1 * a_1 + b_1 = c_2 * a_2 + b_2 with the 'a's and 'b's known
-            // if we pose
+            // then, let
             // A = [a_1 a_2]
             // c = [c_1, c_2], b = [b_1 b_2]
-            // then we can write
+            // and we can write
             // Ac = b <=> c = A^-1 * b
             // with A^-1 = 1/|A| * adj(A)
             // we also have that if |A| = 0, then the lines are parallel
             // Finally, we must also consider the cases where
             // c_1 and c_2 lie outside the vertices
-            // nicely, because we do end - start for finding a
+            // Nicely, because we do end - start for finding the dirs
             // then if c_1 or c_2 lie outside of [0, 1]
+            // TODO: Before we actually start computing things left and right, we can do a simple AABB check to limit the calculations
             var startA = a.getPtA(), endA = a.getPtB();
             var startB = b.getPtA(), endB = b.getPtB();
-            // TODO: Before we actually start computing things left and right, we can do a simple AABB check to limit the calculations
             var dirA = a.getDir(), dirB = b.getDir();
             var det = -(dirA.x * dirB.y) + (dirB.x * dirA.y);
             if (det === 0)
@@ -255,6 +255,17 @@ var geo;
             if (cB < 0 || cB > 1)
                 return null;
             return [cA, cB];
+        };
+        Vertex.getPtIntersection = function (v, p) {
+            // If you declare p as a vertex with start = p and dir = (1, 0),
+            // then the algo simplifies to this
+            var start = v.getPtA();
+            var dir = v.getDir();
+            if (dir.y === 0)
+                return null;
+            var diffX = p.x - start.x, diffY = p.y - start.y;
+            var vertexC = diffY / dir.y;
+            return (-dir.y * diffX + dir.x * diffY) / dir.y;
         };
         Vertex.prototype.getPtA = function () {
             return this.ptSource.points[this.ptAIndex];
@@ -272,9 +283,18 @@ var geo;
         Vertex.prototype.isInside = function (pt) {
             return this.norm.dot(pt) > 0;
         };
+        Vertex.prototype.newSource = function (ptSource, shift) {
+            shift = shift || 0;
+            return new Vertex(ptSource, this.ptAIndex + shift, this.ptBIndex + shift, this.norm, this.dir);
+        };
         return Vertex;
     }());
     geo.Vertex = Vertex;
+    var Fate;
+    (function (Fate) {
+        Fate[Fate["DEAD"] = 0] = "DEAD";
+        Fate[Fate["ALIVE"] = 1] = "ALIVE";
+    })(Fate || (Fate = {}));
     var Shape = (function () {
         function Shape() {
         }
@@ -294,22 +314,65 @@ var geo;
             return shape;
         };
         Shape.newUnion = function (a, b) {
-            return a;
-            var vertA = a.vertices[0];
-            var vertB = b.vertices[0];
-            var inter = Vertex.getIntersection(vertA, vertB);
-            if (inter) {
-                var ptA = vertA.getPtA();
-                var ptB = vertB.getPtA();
-                if (vertB.isInside(ptA)) {
+            var s = new Shape();
+            s.points = a.points.concat(b.points);
+            var ptsFate = [];
+            var aVerts = a.vertices.map(function (v) { return v.newSource(s); });
+            var aVertsFate = [];
+            var shift = a.points.length;
+            var bVerts = b.vertices.map(function (v) { return v.newSource(s, shift); });
+            var bVertsFate = [];
+            var _loop_1 = function(i) {
+                var aVert = aVerts[i];
+                // Since vertices are not ordered, we are handling intersections in
+                // two steps so that we can handle them properly; liveliness depends
+                // on it
+                var inters = [];
+                for (var j = bVerts.length; j--;) {
+                    var bVert = bVerts[j];
+                    var inter = Vertex.getIntersection(aVert, bVert);
+                    if (inter)
+                        inters.push([inter[0], inter[1], bVert, j]);
+                }
+                if (inters.length) {
+                    aVertsFate[i] = Fate.DEAD;
+                    // Since we have found intersections, then we can split and
+                    // determine our fate
+                    var lastIndex = aVert.ptAIndex;
+                    var alive_1 = undefined;
+                    inters
+                        .sort(function (lhs, rhs) { return lhs[0] - rhs[0]; })
+                        .forEach(function (inter) {
+                        var bVert = inter[2];
+                        var j = inter[3];
+                        alive_1 = !(alive_1 === undefined ?
+                            bVert.isInside(aVert.getPtA()) :
+                            alive_1);
+                        bVertsFate[];
+                        if (bVert.isInside(aVert.getPtA())) {
+                            // Because the starting pt of a is inside b, then it
+                            // must die
+                            ptsFate[];
+                        }
+                    });
                 }
                 else {
+                    // Because there were no intersections, then we need to check
+                    // the points to attempt to find our fate; if either of the
+                    // connecting points is dead, then this is dead as well and we
+                    // can propagate the fate
+                    if (ptsFate[aVert.ptAIndex] === Fate.DEAD ||
+                        ptsFate[aVert.ptBIndex] === Fate.DEAD) {
+                        aVertsFate[i] =
+                            ptsFate[aVert.ptAIndex] =
+                                ptsFate[aVert.ptBIndex] = Fate.DEAD;
+                    }
                 }
-                if (vertA.isInside(ptB)) {
-                }
-                else {
-                }
+            };
+            for (var i = aVerts.length; i--;) {
+                _loop_1(i);
             }
+            return s;
         };
         Shape.union = function (a, b) {
             var s = new Shape();

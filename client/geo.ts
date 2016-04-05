@@ -15,22 +15,20 @@ module geo {
             // with a_1 = [a_11, a_12], a_2 = [a_21, a_22]
             // Then we are wondering about the linear equation
             // c_1 * a_1 + b_1 = c_2 * a_2 + b_2 with the 'a's and 'b's known
-            // if we pose
+            // then, let
             // A = [a_1 a_2]
             // c = [c_1, c_2], b = [b_1 b_2]
-            // then we can write
+            // and we can write
             // Ac = b <=> c = A^-1 * b
             // with A^-1 = 1/|A| * adj(A)
             // we also have that if |A| = 0, then the lines are parallel
             // Finally, we must also consider the cases where
             // c_1 and c_2 lie outside the vertices
-            // nicely, because we do end - start for finding a
+            // Nicely, because we do end - start for finding the dirs
             // then if c_1 or c_2 lie outside of [0, 1]
+            // TODO: Before we actually start computing things left and right, we can do a simple AABB check to limit the calculations
             var startA = a.getPtA(), endA = a.getPtB();
             var startB = b.getPtA(), endB = b.getPtB();
-
-            // TODO: Before we actually start computing things left and right, we can do a simple AABB check to limit the calculations
-
             var dirA = a.getDir(), dirB = b.getDir();
 
             var det = - (dirA.x * dirB.y) + (dirB.x * dirA.y);
@@ -46,6 +44,18 @@ module geo {
             if (cB < 0 || cB > 1) return null;
 
             return [cA, cB];
+        }
+        static getPtIntersection(v: Vertex, p: THREE.Vector2): number {
+            // If you declare p as a vertex with start = p and dir = (1, 0),
+            // then the algo simplifies to this
+            var start = v.getPtA();
+            var dir = v.getDir();
+
+            if (dir.y === 0) return null;
+
+            var diffX = p.x - start.x, diffY = p.y - start.y;
+            let vertexC = diffY / dir.y;
+            return (- dir.y * diffX + dir.x * diffY) / dir.y;
         }
 
         constructor(
@@ -84,8 +94,22 @@ module geo {
         isInside(pt: THREE.Vector2) {
             return this.norm.dot(pt) > 0;
         }
+        newSource(ptSource: PtSource, shift?: number): Vertex {
+            shift = shift || 0;
+            return new Vertex(
+                ptSource,
+                this.ptAIndex + shift,
+                this.ptBIndex + shift,
+                this.norm,
+                this.dir
+            );
+        }
     }
 
+    enum Fate {
+        DEAD,
+        ALIVE
+    }
     export class Shape implements PtSource {
 
         static fromDefinitions(
@@ -107,25 +131,69 @@ module geo {
         }
 
         static newUnion(a: Shape, b: Shape): Shape {
-            return a;
 
-            let vertA = a.vertices[0];
-            let vertB = b.vertices[0];
-            let inter = Vertex.getIntersection(vertA, vertB);
-            if (inter) {
-                let ptA = vertA.getPtA();
-                let ptB = vertB.getPtA();
-                if (vertB.isInside(ptA)) {
-                    // The first part of the intersection is dead
-                } else {
-                    // The second part of the intersection is dead
+            let s = new Shape();
+            s.points = a.points.concat(b.points);
+            let ptsFate: Fate[] = [];
+
+            let aVerts = a.vertices.map(v => v.newSource(s));
+            let aVertsFate: Fate[] = [];
+
+            let shift = a.points.length;
+            let bVerts = b.vertices.map(v => v.newSource(s, shift));
+            let bVertsFate: Fate[] = [];
+
+            for (let i = aVerts.length; i--;) {
+                let aVert = aVerts[i];
+
+                // Since vertices are not ordered, we are handling intersections in
+                // two steps so that we can handle them properly; liveliness depends
+                // on it
+                let inters: [number, number, Vertex, number][] = [];
+                for (let j = bVerts.length; j--;) {
+                    let bVert = bVerts[j];
+                    let inter = Vertex.getIntersection(aVert, bVert);
+                    if (inter) inters.push([inter[0], inter[1], bVert, j]);
                 }
-                if (vertA.isInside(ptB)) {
-                    // The first part of the intersection is dead
+                if (inters.length) {
+                    aVertsFate[i] = Fate.DEAD;
+                    // Since we have found intersections, then we can split and
+                    // determine our fate
+                    let lastIndex = aVert.ptAIndex;
+                    let alive: boolean = undefined;
+                    inters
+                        .sort((lhs, rhs) => lhs[0] - rhs[0])
+                        .forEach(inter => {
+                            let bVert = inter[2];
+                            let j = inter[3];
+                            alive = !(alive === undefined ?
+                                bVert.isInside(aVert.getPtA()) :
+                                alive);
+
+                            bVertsFate[]
+
+                            if (bVert.isInside(aVert.getPtA())) {
+                                // Because the starting pt of a is inside b, then it
+                                // must die
+                                ptsFate[];
+                            }
+                        });
                 } else {
-                    // The first part of the intersection is dead
+                    // Because there were no intersections, then we need to check
+                    // the points to attempt to find our fate; if either of the
+                    // connecting points is dead, then this is dead as well and we
+                    // can propagate the fate
+                    if (ptsFate[aVert.ptAIndex] === Fate.DEAD ||
+                        ptsFate[aVert.ptBIndex] === Fate.DEAD
+                    ) {
+                        aVertsFate[i] =
+                        ptsFate[aVert.ptAIndex] =
+                        ptsFate[aVert.ptBIndex] = Fate.DEAD;
+                    }
                 }
             }
+
+            return s;
         }
         static union(a: Shape, b: Shape): Shape {
 
