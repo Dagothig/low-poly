@@ -1,5 +1,12 @@
 /// <reference path="extensions.ts" />
 /// <reference path="lib/three.d.ts" />
+/// <reference path="lib/effect-composer.d.ts" />
+/// <reference path="lib/render-pass.d.ts" />
+/// <reference path="lib/shader-pass.d.ts" />
+/// <reference path="graph.ts" />
+/// <reference path="geo.ts" />
+/// <reference path="input.ts" />
+/// <reference path="dungeon.ts" />
 
 /* Scene */
 var scene = new THREE.Scene();
@@ -11,47 +18,34 @@ var camera = new THREE.PerspectiveCamera(
     0.1, // near
     1000 // far
 );
-camera.position.set(0, 0, 1.5);
-
-/* Light */
-
-var point = new THREE.PointLight(0xffffff, 1, 2, 2);
-point.position.set(0, 0, 0);
-scene.add(point);
+camera.position.set(0, 0, 0);
 
 /* textures */
 var loader = new THREE.TextureLoader();
-var testBrickTexture = loader.load('img/test-brick-texture.png', texture => {
+var onLoaded = (texture: THREE.Texture) => {
     texture.magFilter = texture.minFilter = THREE.NearestFilter;
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(2, 2);
-});
-var testBrickBump = loader.load('img/test-brick-bump.png', texture => {
-    texture.minFilter = texture.magFilter = THREE.LinearFilter;
-    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(2, 2);
-});
-var testBrickNormal = loader.load('img/test-brick-normal-dirt.png', texture => {
-    texture.minFilter = texture.magFilter = THREE.NearestFilter;
-    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(2, 2);
-});
+};
+var testBrickTexture = loader.load('img/test-brick-texture.png', onLoaded);
+var testBrickNormal = loader.load('img/test-brick-normal-dirt.png', onLoaded);
+var testMortarTexture = loader.load('img/test-mortar-texture.png', onLoaded);
+var testMortarNormal = loader.load('img/test-mortar-normal-dirt.png', onLoaded);
 
 /* Test material */
-var material = new THREE.MeshPhongMaterial({
+var brickMaterial = new THREE.MeshPhongMaterial({
     color: 0xffffff,
-    side: THREE.BackSide,
+    side: THREE.FrontSide,
     map: testBrickTexture,
-    normalMap: testBrickNormal,
-    bumpMap: testBrickBump
+    normalMap: testBrickNormal
+});
+var mortarMaterial = new THREE.MeshPhongMaterial({
+    color: 0xffffff,
+    side: THREE.FrontSide,
+    map: testMortarTexture,
+    normalMap: testMortarNormal
 });
 
-/* Test geometry */
-var geometry = new THREE.BoxGeometry(1, 1, 1);
-
-/* Test mesh */
-var mesh = new THREE.Mesh(geometry, material);
-scene.add(mesh);
+dungeon.populate(scene, new THREE.MultiMaterial([brickMaterial, mortarMaterial]));
 
 /* Renderer */
 var renderer = new THREE.WebGLRenderer({
@@ -59,10 +53,11 @@ var renderer = new THREE.WebGLRenderer({
 });
 document.body.appendChild(renderer.domElement);
 
+var nullT: THREE.Texture = null;
 var testShader = {
     uniforms: {
-        tDiffuse: { type: "t", value: null },
-        resolution: { type: "v2", value: new THREE.Vector2(1, 1) },
+        tDiffuse: { type: "t", value: nullT },
+        resolution: { type: "v2", value: new THREE.Vector2() },
         colSpace: { type: "f", value: 16 },
         pixelSize: { type: "f", value: 3 }
     },
@@ -85,51 +80,95 @@ var effect = new THREE.ShaderPass(testShader);
 effect.renderToScreen = true;
 composer.addPass(effect);
 
+/* Geo render */
+var geoRender = new geo.CanvasRenderer();
+document.body.appendChild(geoRender.canvas);
+var shape = geo.Shape.newUnion(
+    geo.Shape.fromDefinitions(
+        [
+            new THREE.Vector2(0, 10),
+            new THREE.Vector2(100, 10),
+            new THREE.Vector2(0, 100),
+            new THREE.Vector2(50, 50),
+            new THREE.Vector2(25, 50)
+        ],
+        [
+            [0, 1, false],
+            [0, 2, true],
+            [1, 3, false],
+            [3, 4, false],
+            [4, 2, false]
+        ]
+    ),
+    geo.Shape.fromDefinitions(
+        [
+            new THREE.Vector2(25, 25),
+            new THREE.Vector2(50, 0),
+            new THREE.Vector2(40, 80),
+            new THREE.Vector2(30, 90),
+            new THREE.Vector2(80, 90),
+            new THREE.Vector2(35, 40)
+        ],
+        [
+            [0, 3, true],
+            [3, 4, true],
+            [4, 1, true],
+            [1, 2, true],
+            [2, 5, true],
+            [5, 0, true],
+        ]
+    )
+);
 
 /* Size */
 window.onresize = event => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
     var x = window.innerWidth, y = window.innerHeight;
+
+    camera.aspect = x / y;
+    camera.updateProjectionMatrix();
+
     testShader.uniforms.resolution.value.set(x, y);
     effect.uniforms.resolution.value.set(x, y);
     effect.material.uniforms.resolution.value.set(x, y);
+
     renderer.setSize(x, y, false);
     composer.setSize(x, y);
+
+    geoRender.updateSize();
+    geoRender.render(shape);
 };
 window.onresize(null);
 
+/* Input */
+var controls = new input.Controls(document.body);
+var camControl = new input.MouseCamera();
+
+/* Position */
+var moveAlongPitch = 0, moveAlongYaw = 0;
+scene.add(camera);
+
 /* Render */
 var lastRender = 0;
-var anim = 0;
 function render() {
     var now = window.performance.now();
-    anim += (now - lastRender)/1000;
     lastRender = now;
-    mesh.rotateY(0.005);
-    point.position.x = Math.sin(anim) * 0.4;
-    point.position.y = Math.cos(anim) * 0.4;
-    point.position.z = Math.sin(anim) * Math.cos(anim) * 0.4;
+
+    controls.step(state => {
+        if (state.pointerLocked) camControl.step(state);
+
+        moveAlongPitch = moveAlongYaw = 0;
+        if (state.keys.isDown('left')) moveAlongYaw--;
+        if (state.keys.isDown('right')) moveAlongYaw++;
+        if (state.keys.isDown('up')) moveAlongPitch--;
+        if (state.keys.isDown('down')) moveAlongPitch++;
+        let dir = camControl.directionFor(moveAlongPitch, moveAlongYaw, 0.01);
+
+        camera.position.add(dir);
+        camera.setRotationFromEuler(camControl.euler);
+    });
+
+    composer.render();
 
     requestAnimationFrame(render);
-    composer.render();
 }
 render();
-
-/* Temp pos */
-window.onkeydown = event => {
-    switch (event.keyCode) {
-        case 38: // up
-            camera.position.y += 0.1;
-            break;
-        case 40: // down
-            camera.position.y -= 0.1;
-            break;
-        case 37: // left
-            camera.position.z += 0.1;
-            break;
-        case 39: // right
-            camera.position.z -= 0.1;
-            break;
-    }
-};

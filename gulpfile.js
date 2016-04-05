@@ -2,6 +2,7 @@ var gulp = require('gulp');
 
 gulp.task('client', function(cb) {
     var ts = require('gulp-typescript');
+    var concat = require('gulp-concat');
 
     return gulp.src('client/main.ts')
         .pipe(ts(ts.createProject('tsconfig.json', {

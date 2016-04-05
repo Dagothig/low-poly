@@ -3,9 +3,12 @@
   "version": "0.0.0",
   "author": "Dagothig <guillaumenoelmartel@gmail.com>",
   "description": "Low-poly first-person limited colors test",
-  "dependencies": {},
+  "dependencies": {
+    "express": "^4.13.4"
+  },
   "devDependencies": {
     "gulp": "^3.9.1",
+    "gulp-concat": "^2.6.0",
     "gulp-typescript": "^2.12.1"
   }
 }
