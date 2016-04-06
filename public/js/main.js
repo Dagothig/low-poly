@@ -338,7 +338,7 @@ var geo;
                 else
                     arr.push(v);
             }
-            var split = function (index, vert, verts, 
+            function split(index, vert, verts, 
                 // c, otherIndex, otherVertex, otherC, newPtIndex
                 inters) {
                 var replace = true;
@@ -349,8 +349,13 @@ var geo;
                     .sort(function (lhs, rhs) { return lhs[0] - rhs[0]; })
                     .forEach(function (inter) {
                     var oVert = inter[2];
-                    if (alive === undefined)
+                    if (alive === undefined) {
                         alive = !oVert.isInside(ptA);
+                        // If the first one is inside, then it's first pt is inside
+                        // as well and must be killed (with fire)
+                        if (!alive)
+                            ptsFates[vert.ptAIndex] = Fate.DEAD;
+                    }
                     var newPtIndex = inter[4];
                     var newPt;
                     if (!newPtIndex) {
@@ -359,43 +364,150 @@ var geo;
                     }
                     if (alive) {
                         pushorep(replace, verts, index, new geo.Vertex(s, lastIndex, newPtIndex, vert.norm, vert.normC));
+                        ptsFates[lastIndex] = Fate.ALIVE;
+                        ptsFates[newPtIndex] = Fate.ALIVE;
                         replace = false;
                     }
                     lastIndex = newPtIndex;
                     alive = !alive;
                 });
-                if (alive)
+                if (alive) {
                     pushorep(replace, verts, index, new geo.Vertex(s, lastIndex, vert.ptBIndex, vert.norm, vert.normC));
-            };
+                    ptsFates[lastIndex] = Fate.ALIVE;
+                    ptsFates[vert.ptBIndex] = Fate.ALIVE;
+                }
+                else if (alive === false)
+                    ptsFates[vert.ptBIndex] = Fate.DEAD;
+            }
+            ;
+            function findFate(ptIndex, verts) {
+                var pt = s.points[ptIndex];
+                var closest = null;
+                var closestInter = null;
+                verts.forEach(function (vert) {
+                    var inter = geo.Vertex.getPtIntersection(vert, pt);
+                    if (!inter)
+                        return;
+                    inter = Math.abs(inter);
+                    if (closestInter === null || inter < closestInter) {
+                        closest = vert;
+                        closestInter = closestInter;
+                    }
+                });
+                return (closest === null || !closest.isInside(pt)) ?
+                    Fate.ALIVE : Fate.DEAD;
+            }
+            function handlePtFate(index, vert, verts) {
+                var fateA = ptsFates[vert.ptAIndex];
+                var fateB = ptsFates[vert.ptBIndex];
+                if (fateA === Fate.ALIVE && fateB === Fate.ALIVE) {
+                    // live
+                    return;
+                }
+                if (fateA === Fate.DEAD || fateB === Fate.DEAD) {
+                    if (fateA === undefined)
+                        ptsFates[vert.ptAIndex] = Fate.DEAD;
+                    if (fateB === undefined)
+                        ptsFates[vert.ptBIndex] = Fate.DEAD;
+                    // die
+                    return;
+                }
+                if (fateA === undefined)
+                    ptsFates[vert.ptAIndex] = findFate(vert.ptAIndex, verts);
+                if (fateB === undefined)
+                    ptsFates[vert.ptBIndex] = findFate(vert.ptBIndex, verts);
+                handlePtFate(index, vert, verts);
+            }
             // We can do the aVert splits sooner than the bSplits because we can
             // fully know after having gone through the bVerts. For the bInters,
             // we must wait until we've gone through every pair
+            var aNeeded, bNeeded;
+            var ptA, ptB;
+            var closestToA, closestToB;
+            var closestInterToA, closestInterToB;
             // bC aIndex aVert aC, newPtIndex, indexed by bVert index
             var bInters = [];
             var _loop_1 = function(i) {
                 var aVert = aVerts[i];
                 // aC bIndex bVert bC newPtIndex
                 var inters = [];
+                aNeeded = ptsFates[aVert.ptAIndex] === undefined;
+                bNeeded = ptsFates[aVert.ptBIndex] === undefined;
+                if (aNeeded) {
+                    closestToA = closestInterToA = null;
+                    ptA = aVert.getPtA();
+                }
+                if (bNeeded) {
+                    closestToB = closestInterToB = null;
+                    ptB = aVert.getPtB();
+                }
                 for (var j = bVerts.length; j--;) {
                     var bVert = bVerts[j];
                     // cA cB
                     var inter = geo.Vertex.getIntersection(aVert, bVert);
-                    if (inter)
+                    if (inter) {
                         inters.push([inter[0], j, bVert, inter[1], undefined]);
+                        aNeeded = bNeeded = false;
+                    }
+                    a: if (aNeeded) {
+                        var inter_1 = geo.Vertex.getPtIntersection(bVert, ptA);
+                        if (inter_1 === null)
+                            break a;
+                        inter_1 = Math.abs(inter_1);
+                        if (closestInterToA === null || inter_1 < closestInterToA) {
+                            closestInterToA = inter_1;
+                            closestToA = bVert;
+                        }
+                    }
+                    b: if (bNeeded) {
+                        var inter_2 = geo.Vertex.getPtIntersection(bVert, ptB);
+                        if (inter_2 === null)
+                            break b;
+                        inter_2 = Math.abs(inter_2);
+                        if (closestInterToB === null || inter_2 < closestInterToB) {
+                            closestInterToB = inter_2;
+                            closestToB = bVert;
+                        }
+                    }
                 }
                 split(i, aVert, aVerts, inters);
-                inters.forEach(function (inter) {
-                    var arr = bInters[inter[1]];
-                    if (!arr)
-                        bInters[inter[1]] = arr = [];
-                    arr.push([inter[3], i, aVert, inter[0], inter[4]]);
-                });
+                // Fate is either determined by it's intersections
+                if (inters.length)
+                    inters.forEach(function (inter) {
+                        var arr = bInters[inter[1]];
+                        if (!arr)
+                            bInters[inter[1]] = arr = [];
+                        arr.push([inter[3], i, aVert, inter[0], inter[4]]);
+                    });
+                else {
+                    if (aNeeded)
+                        ptsFates[aVert.ptAIndex] =
+                            (closestToA === null || !closestToA.isInside(ptA)) ?
+                                Fate.ALIVE : Fate.DEAD;
+                    if (bNeeded)
+                        ptsFates[aVert.ptBIndex] =
+                            (closestToB === null || !closestToB.isInside(ptB)) ?
+                                Fate.ALIVE : Fate.DEAD;
+                    handlePtFate(i, aVert, bVerts);
+                }
             };
             for (var i = aVerts.length; i--;) {
                 _loop_1(i);
             }
-            bInters.forEach(function (inters, i) { return split(i, bVerts[i], bVerts, inters); });
+            bVerts.forEach(function (bVert, i) {
+                var inters = bInters[i];
+                if (inters && inters.length)
+                    split(i, bVert, bVerts, inters);
+                else
+                    handlePtFate(i, bVert, aVerts);
+            });
             s.vertices = aVerts.concat(bVerts);
+            s.points.forEach(function (pt, i) {
+                if (ptsFates[i] === Fate.DEAD)
+                    pt.set(i * 2, 0);
+                if (ptsFates[i] === undefined)
+                    throw 'Algorithmic deficiency';
+            });
             s.computeSize();
             return s;
         };
@@ -818,20 +930,6 @@ composer.addPass(effect);
 var geoRender = new geo.CanvasRenderer();
 document.body.appendChild(geoRender.canvas);
 var shape = geo.Shape.union(geo.Shape.fromDefinitions([
-    new THREE.Vector2(25, 25),
-    new THREE.Vector2(50, 0),
-    new THREE.Vector2(40, 80),
-    new THREE.Vector2(30, 90),
-    new THREE.Vector2(80, 90),
-    new THREE.Vector2(35, 40)
-], [
-    [5, 0, true],
-    [3, 4, true],
-    [0, 3, true],
-    [4, 1, true],
-    [1, 2, true],
-    [2, 5, true],
-]), geo.Shape.fromDefinitions([
     new THREE.Vector2(0, 10),
     new THREE.Vector2(100, 10),
     new THREE.Vector2(0, 100),
@@ -843,6 +941,22 @@ var shape = geo.Shape.union(geo.Shape.fromDefinitions([
     [1, 3, false],
     [3, 4, false],
     [4, 2, false]
+]), geo.Shape.fromDefinitions([
+    new THREE.Vector2(25, 25),
+    new THREE.Vector2(50, 0),
+    new THREE.Vector2(40, 80),
+    new THREE.Vector2(30, 90),
+    new THREE.Vector2(80, 90),
+    new THREE.Vector2(35, 40),
+    new THREE.Vector2(30, 30)
+], [
+    [5, 6, true],
+    [6, 0, true],
+    [3, 4, true],
+    [0, 3, true],
+    [4, 1, true],
+    [1, 2, true],
+    [2, 5, true],
 ]));
 /* Size */
 window.onresize = function (event) {

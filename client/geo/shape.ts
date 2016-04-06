@@ -42,11 +42,11 @@ module geo {
                 else arr.push(v);
             }
 
-            let split = (
+            function split(
                 index: number, vert: Vertex, verts: Vertex[],
                 // c, otherIndex, otherVertex, otherC, newPtIndex
                 inters: [number, number, Vertex, number, number][]
-            ) => {
+            ) {
                 let replace = true;
 
                 let ptA = vert.getPtA();
@@ -56,7 +56,12 @@ module geo {
                 .sort((lhs, rhs) => lhs[0] - rhs[0])
                 .forEach(inter => {
                     let oVert = inter[2];
-                    if (alive === undefined) alive = !oVert.isInside(ptA);
+                    if (alive === undefined) {
+                        alive = !oVert.isInside(ptA);
+                        // If the first one is inside, then it's first pt is inside
+                        // as well and must be killed (with fire)
+                        if (!alive) ptsFates[vert.ptAIndex] = Fate.DEAD;
+                    }
 
                     let newPtIndex = inter[4];
                     let newPt: THREE.Vector2;
@@ -68,23 +73,72 @@ module geo {
                     if (alive) {
                         pushorep(replace, verts, index, new Vertex(s,
                             lastIndex, newPtIndex,
-                            vert.norm, vert.normC
+                            vert.norm,     vert.normC
                         ));
+                        ptsFates[lastIndex] = Fate.ALIVE;
+                        ptsFates[newPtIndex] = Fate.ALIVE;
                         replace = false;
                     }
 
                     lastIndex = newPtIndex;
                     alive = !alive;
                 });
-                if (alive) pushorep(replace, verts, index, new Vertex(s,
-                    lastIndex, vert.ptBIndex,
-                    vert.norm, vert.normC
-                ));
+                if (alive) {
+                    pushorep(replace, verts, index, new Vertex(s,
+                        lastIndex, vert.ptBIndex,
+                        vert.norm, vert.normC
+                    ));
+                    ptsFates[lastIndex] = Fate.ALIVE;
+                    ptsFates[vert.ptBIndex] = Fate.ALIVE;
+                }
+                else if (alive === false) ptsFates[vert.ptBIndex] = Fate.DEAD;
             };
+
+            function findFate(ptIndex: number, verts: Vertex[]): Fate {
+                let pt = s.points[ptIndex];
+                let closest: Vertex = null;
+                let closestInter: number = null;
+                verts.forEach(vert => {
+                    let inter = Vertex.getPtIntersection(vert, pt);
+                    if (!inter) return;
+                    inter = Math.abs(inter);
+                    if (closestInter === null || inter < closestInter) {
+                        closest = vert;
+                        closestInter = closestInter;
+                    }
+                });
+                return (closest === null || !closest.isInside(pt)) ?
+                    Fate.ALIVE : Fate.DEAD;
+            }
+            function handlePtFate(index: number, vert: Vertex, verts: Vertex[]) {
+                let fateA = ptsFates[vert.ptAIndex];
+                let fateB = ptsFates[vert.ptBIndex];
+                if (fateA === Fate.ALIVE && fateB === Fate.ALIVE) {
+                    // live
+                    return;
+                }
+                if (fateA === Fate.DEAD || fateB === Fate.DEAD) {
+                    if (fateA === undefined) ptsFates[vert.ptAIndex] = Fate.DEAD;
+                    if (fateB === undefined) ptsFates[vert.ptBIndex] = Fate.DEAD;
+                    // die
+                    return;
+                }
+                if (fateA === undefined)
+                    ptsFates[vert.ptAIndex] = findFate(vert.ptAIndex, verts);
+                if (fateB === undefined)
+                    ptsFates[vert.ptBIndex] = findFate(vert.ptBIndex, verts);
+
+                handlePtFate(index, vert, verts);
+            }
 
             // We can do the aVert splits sooner than the bSplits because we can
             // fully know after having gone through the bVerts. For the bInters,
             // we must wait until we've gone through every pair
+
+            let aNeeded: boolean, bNeeded: boolean;
+            let ptA: THREE.Vector2, ptB: THREE.Vector2;
+            let closestToA: Vertex, closestToB: Vertex;
+            let closestInterToA: number, closestInterToB: number;
 
             // bC aIndex aVert aC, newPtIndex, indexed by bVert index
             let bInters: [number, number, Vertex, number, number][][] = [];
@@ -92,23 +146,78 @@ module geo {
                 let aVert = aVerts[i];
                 // aC bIndex bVert bC newPtIndex
                 let inters: [number, number, Vertex, number, number][] = [];
+
+                aNeeded = ptsFates[aVert.ptAIndex] === undefined;
+                bNeeded = ptsFates[aVert.ptBIndex] === undefined;
+                if (aNeeded) {
+                    closestToA = closestInterToA = null;
+                    ptA = aVert.getPtA();
+                }
+                if (bNeeded) {
+                    closestToB = closestInterToB = null;
+                    ptB = aVert.getPtB();
+                }
+
                 for (let j = bVerts.length; j--;) {
                     let bVert = bVerts[j];
                     // cA cB
                     let inter = Vertex.getIntersection(aVert, bVert);
-                    if (inter)
+                    if (inter) {
                         inters.push([inter[0], j, bVert, inter[1], undefined]);
+                        aNeeded = bNeeded = false;
+                    }
+
+                    a: if (aNeeded) {
+                        let inter = Vertex.getPtIntersection(bVert, ptA);
+                        if (inter === null) break a;
+                        inter = Math.abs(inter);
+                        if (closestInterToA === null || inter < closestInterToA) {
+                            closestInterToA = inter;
+                            closestToA = bVert;
+                        }
+                    }
+
+                    b: if (bNeeded) {
+                        let inter = Vertex.getPtIntersection(bVert, ptB);
+                        if (inter === null) break b;
+                        inter = Math.abs(inter);
+                        if (closestInterToB === null || inter < closestInterToB) {
+                            closestInterToB = inter;
+                            closestToB = bVert;
+                        }
+                    }
                 }
                 split(i, aVert, aVerts, inters);
-                inters.forEach(inter => {
+                // Fate is either determined by it's intersections
+                if (inters.length) inters.forEach(inter => {
                     let arr = bInters[inter[1]];
                     if (!arr) bInters[inter[1]] = arr = [];
                     arr.push([inter[3], i, aVert, inter[0], inter[4]]);
                 });
+                else {
+                    if (aNeeded) ptsFates[aVert.ptAIndex] =
+                        (closestToA === null || !closestToA.isInside(ptA)) ?
+                        Fate.ALIVE : Fate.DEAD;
+
+                    if (bNeeded) ptsFates[aVert.ptBIndex] =
+                        (closestToB === null || !closestToB.isInside(ptB)) ?
+                        Fate.ALIVE : Fate.DEAD;
+
+                    handlePtFate(i, aVert, bVerts);
+                }
             }
-            bInters.forEach((inters, i) => split(i, bVerts[i], bVerts, inters));
+            bVerts.forEach((bVert, i) => {
+                let inters = bInters[i];
+
+                if (inters && inters.length) split(i, bVert, bVerts, inters);
+                else handlePtFate(i, bVert, aVerts);
+            });
 
             s.vertices = aVerts.concat(bVerts);
+            s.points.forEach((pt, i) => {
+                if (ptsFates[i] === Fate.DEAD) pt.set(i * 2, 0);
+                if (ptsFates[i] === undefined) throw 'Algorithmic deficiency';
+            });
             s.computeSize();
             return s;
         }
