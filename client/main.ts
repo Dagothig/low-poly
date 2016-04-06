@@ -83,7 +83,7 @@ composer.addPass(effect);
 /* Geo render */
 var geoRender = new geo.CanvasRenderer();
 document.body.appendChild(geoRender.canvas);
-var shape = geo.Shape.newUnion(
+var shape = geo.Shape.union(
     geo.Shape.fromDefinitions(
         [
             new THREE.Vector2(0, 10),

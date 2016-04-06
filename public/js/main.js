@@ -214,11 +214,12 @@ var graph;
 var geo;
 (function (geo) {
     var Vertex = (function () {
-        function Vertex(ptSource, ptAIndex, ptBIndex, norm, dir) {
+        function Vertex(ptSource, ptAIndex, ptBIndex, norm, normC, dir) {
             this.ptSource = ptSource;
             this.ptAIndex = ptAIndex;
             this.ptBIndex = ptBIndex;
             this.norm = norm;
+            this.normC = normC;
             this.dir = dir;
         }
         Vertex.getIntersection = function (a, b) {
@@ -264,9 +265,9 @@ var geo;
                 return null;
             var diffX = p.x - start.x, diffY = p.y - start.y;
             var cV = diffY / dir.y;
+            var c = (-dir.y * diffX + dir.x * diffY) / dir.y;
             if (cV < 0 || cV > 1)
                 return null;
-            var c = (-dir.y * diffX + dir.x * diffY) / dir.y;
             return c;
         };
         Vertex.prototype.getPtA = function () {
@@ -283,11 +284,11 @@ var geo;
                 (this.dir = this.getPtB().clone().sub(this.getPtA()));
         };
         Vertex.prototype.isInside = function (pt) {
-            return this.norm.dot(pt) < 0;
+            return this.norm.dot(pt) > this.normC;
         };
         Vertex.prototype.newSource = function (ptSource, shift) {
             shift = shift || 0;
-            return new Vertex(ptSource, this.ptAIndex + shift, this.ptBIndex + shift, this.norm, this.dir);
+            return new Vertex(ptSource, this.ptAIndex + shift, this.ptBIndex + shift, this.norm, this.normC, this.dir);
         };
         return Vertex;
     }());
@@ -304,13 +305,15 @@ var geo;
             var shape = new Shape();
             shape.points = points;
             shape.vertices = vertices.map(function (def) {
-                var norm = shape.points[def[1]].clone()
-                    .sub(shape.points[def[0]]);
+                var ptA = shape.points[def[0]];
+                var ptB = shape.points[def[1]];
+                var norm = ptB.clone().sub(ptA);
                 norm.set(-norm.y, norm.x);
                 norm.setLength(1);
                 if (def[2])
                     norm.multiplyScalar(-1);
-                return new Vertex(shape, def[0], def[1], norm);
+                var normC = norm.x ? (ptA.x * norm.x) : (ptB.y * norm.y);
+                return new Vertex(shape, def[0], def[1], norm, normC);
             });
             shape.computeSize();
             return shape;
@@ -358,9 +361,8 @@ var geo;
             var alive = undefined;
             inters.sort(function (lhs, rhs) { return lhs[0] - rhs[0]; }).forEach(function (inter) {
                 var bVert = inter[2];
-                alive = !(alive === undefined ?
-                    bVert.isInside(ptA) :
-                    alive);
+                if (alive === undefined)
+                    alive = !bVert.isInside(ptA);
                 var newPt = aVert.getInterpolated(inter[0]);
                 var newPtIndex = s.points.length;
                 s.points.push(newPt);
@@ -368,17 +370,18 @@ var geo;
                 // Note that we cannot conclude on the fate of these
                 // vertices yet
                 var j = inter[3];
-                bVerts[j] = new Vertex(s, bVert.ptAIndex, newPtIndex, bVert.norm);
-                bVerts.push(new Vertex(s, newPtIndex, bVert.ptBIndex, bVert.norm));
+                bVerts[j] = new Vertex(s, bVert.ptAIndex, newPtIndex, bVert.norm, bVert.normC);
+                bVerts.push(new Vertex(s, newPtIndex, bVert.ptBIndex, bVert.norm, bVert.normC));
                 if (alive) {
                     aVertsFate[aVertsFate.length] = Fate.ALIVE;
-                    aVerts.push(new Vertex(s, lastIndex, newPtIndex, aVert.norm));
+                    aVerts.push(new Vertex(s, lastIndex, newPtIndex, aVert.norm, aVert.normC));
                 }
                 lastIndex = newPtIndex;
+                alive = !alive;
             });
             if (alive) {
                 aVertsFate[aVertsFate.length] = Fate.ALIVE;
-                aVerts.push(new Vertex(s, lastIndex, aVert.ptBIndex, aVert.norm));
+                aVerts.push(new Vertex(s, lastIndex, aVert.ptBIndex, aVert.norm, aVert.normC));
             }
         };
         Shape.resolveFate = function (vert, i, ptAInters, ptBInters, vertsFate, ptsFate) {
@@ -409,7 +412,7 @@ var geo;
                 ptsFate[vert.ptAIndex] =
                     ptsFate[vert.ptBIndex] = Fate.DEAD;
         };
-        Shape.newUnion = function (a, b) {
+        Shape.union = function (a, b) {
             var s = new Shape();
             s.points = a.points.concat(b.points);
             var ptsFate = [];
@@ -471,51 +474,6 @@ var geo;
             s.vertices = aVerts.filter(vertexFilter(aVertsFate))
                 .concat(bVerts.filter(vertexFilter(bVertsFate)));
             s.pruneDeadPoints(ptsFate);
-            s.computeSize();
-            return s;
-        };
-        Shape.union = function (a, b) {
-            var s = new Shape();
-            s.points = a.points.concat(b.points);
-            s.vertices = [];
-            // Because we don't want to have to do each a for each b in addition
-            // to each b for each a, then we can keep an array of the vertices of b
-            // that were not split;
-            // those that were split will be added as they are found
-            var bverts = Array.gen(function (i) { return true; }, b.vertices.length);
-            var bis = a.points.length;
-            a.vertices.forEach(function (av, i) {
-                var lastPtIndex = av.ptAIndex;
-                var inters = b.vertices
-                    .reduce(function (t, bv, j) {
-                    var inter = Vertex.getIntersection(av, bv);
-                    if (inter) {
-                        t.push([inter[0], inter[1], bv]);
-                        bverts[j] = false;
-                    }
-                    return t;
-                }, [])
-                    .sort(function (lhs, rhs) { return lhs[0] - rhs[0]; })
-                    .forEach(function (inter) {
-                    var bv = inter[2];
-                    var newPt = av.getInterpolated(inter[0]);
-                    var newPtIndex = s.points.length;
-                    s.points.push(newPt);
-                    s.vertices.push(
-                    // first part of av split
-                    new Vertex(s, lastPtIndex, newPtIndex, av.norm), 
-                    // bv split
-                    new Vertex(s, bv.ptAIndex + bis, newPtIndex, bv.norm), new Vertex(s, newPtIndex, bv.ptBIndex + bis, bv.norm));
-                    lastPtIndex = newPtIndex;
-                });
-                s.vertices.push(new Vertex(s, lastPtIndex, av.ptBIndex, av.norm));
-            });
-            bverts.forEach(function (toAdd, i) {
-                if (!toAdd)
-                    return;
-                var bv = b.vertices[i];
-                s.vertices.push(new Vertex(s, bv.ptAIndex + bis, bv.ptBIndex + bis, bv.norm, bv.dir));
-            });
             s.computeSize();
             return s;
         };
@@ -933,7 +891,7 @@ composer.addPass(effect);
 /* Geo render */
 var geoRender = new geo.CanvasRenderer();
 document.body.appendChild(geoRender.canvas);
-var shape = geo.Shape.newUnion(geo.Shape.fromDefinitions([
+var shape = geo.Shape.union(geo.Shape.fromDefinitions([
     new THREE.Vector2(0, 10),
     new THREE.Vector2(100, 10),
     new THREE.Vector2(0, 100),

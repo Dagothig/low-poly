@@ -55,23 +55,25 @@ module geo {
             var diffX = p.x - start.x, diffY = p.y - start.y;
 
             var cV = diffY / dir.y;
-            if (cV < 0 || cV > 1) return null;
-
             var c = (- dir.y * diffX + dir.x * diffY) / dir.y;
+
+            if (cV < 0 || cV > 1) return null;
             return c;
         }
 
         constructor(
-            ptSource?: PtSource,
-            ptAIndex?: number,
-            ptBIndex?: number,
-            norm?: THREE.Vector2,
+            ptSource: PtSource,
+            ptAIndex: number,
+            ptBIndex: number,
+            norm: THREE.Vector2,
+            normC: number,
             dir?: THREE.Vector2
         ) {
             this.ptSource = ptSource;
             this.ptAIndex = ptAIndex;
             this.ptBIndex = ptBIndex;
             this.norm = norm;
+            this.normC = normC;
             this.dir = dir;
         }
 
@@ -79,6 +81,7 @@ module geo {
         ptAIndex: number;
         ptBIndex: number;
         norm: THREE.Vector2;
+        normC: number;
         dir: THREE.Vector2;
 
         getPtA(): THREE.Vector2 {
@@ -95,7 +98,7 @@ module geo {
                 (this.dir = this.getPtB().clone().sub(this.getPtA()));
         }
         isInside(pt: THREE.Vector2) {
-            return this.norm.dot(pt) < 0;
+            return this.norm.dot(pt) > this.normC;
         }
         newSource(ptSource: PtSource, shift?: number): Vertex {
             shift = shift || 0;
@@ -104,6 +107,7 @@ module geo {
                 this.ptAIndex + shift,
                 this.ptBIndex + shift,
                 this.norm,
+                this.normC,
                 this.dir
             );
         }
@@ -122,12 +126,14 @@ module geo {
             var shape = new Shape();
             shape.points = points;
             shape.vertices = vertices.map(def => {
-                var norm = shape.points[def[1]].clone()
-                    .sub(shape.points[def[0]]);
+                let ptA = shape.points[def[0]];
+                let ptB = shape.points[def[1]];
+                var norm = ptB.clone().sub(ptA);
                 norm.set(-norm.y, norm.x);
                 norm.setLength(1);
                 if (def[2]) norm.multiplyScalar(-1);
-                return new Vertex(shape, def[0], def[1], norm)
+                var normC = norm.x ? (ptA.x * norm.x) : (ptB.y * norm.y);
+                return new Vertex(shape, def[0], def[1], norm, normC);
             });
             shape.computeSize();
             return shape;
@@ -185,9 +191,7 @@ module geo {
             let alive: boolean = undefined;
             inters.sort((lhs, rhs) => lhs[0] - rhs[0]).forEach(inter => {
                 let bVert = inter[2];
-                alive = !(alive === undefined ?
-                    bVert.isInside(ptA) :
-                    alive);
+                if (alive === undefined) alive = !bVert.isInside(ptA);
 
                 let newPt = aVert.getInterpolated(inter[0]);
                 let newPtIndex = s.points.length;
@@ -200,27 +204,32 @@ module geo {
                 let j = inter[3];
                 bVerts[j] = new Vertex(s,
                     bVert.ptAIndex, newPtIndex,
-                    bVert.norm
+                    bVert.norm,
+                    bVert.normC
                 );
                 bVerts.push(new Vertex(s,
                     newPtIndex, bVert.ptBIndex,
-                    bVert.norm
+                    bVert.norm,
+                    bVert.normC
                 ));
 
                 if (alive) {
                     aVertsFate[aVertsFate.length] = Fate.ALIVE;
                     aVerts.push(new Vertex(s,
                         lastIndex, newPtIndex,
-                        aVert.norm
+                        aVert.norm,
+                        aVert.normC
                     ));
                 }
                 lastIndex = newPtIndex;
+                alive = !alive;
             });
             if (alive) {
                 aVertsFate[aVertsFate.length] = Fate.ALIVE;
                 aVerts.push(new Vertex(s,
                     lastIndex, aVert.ptBIndex,
-                    aVert.norm
+                    aVert.norm,
+                    aVert.normC
                 ));
             }
         }
@@ -255,7 +264,7 @@ module geo {
             ptsFate[vert.ptAIndex] =
             ptsFate[vert.ptBIndex] = Fate.DEAD;
         }
-        static newUnion(a: Shape, b: Shape): Shape {
+        static union(a: Shape, b: Shape): Shape {
             let s = new Shape();
 
             s.points = a.points.concat(b.points);
@@ -335,56 +344,6 @@ module geo {
             s.vertices = aVerts.filter(vertexFilter(aVertsFate))
                 .concat(bVerts.filter(vertexFilter(bVertsFate)));
             s.pruneDeadPoints(ptsFate);
-            s.computeSize();
-
-            return s;
-        }
-        static union(a: Shape, b: Shape): Shape {
-
-            let s = new Shape();
-            s.points = a.points.concat(b.points);
-            s.vertices = [];
-
-            // Because we don't want to have to do each a for each b in addition
-            // to each b for each a, then we can keep an array of the vertices of b
-            // that were not split;
-            // those that were split will be added as they are found
-            let bverts = Array.gen(i => true, b.vertices.length);
-            let bis = a.points.length;
-            a.vertices.forEach((av, i) => {
-                let lastPtIndex = av.ptAIndex;
-                let inters = b.vertices
-                    .reduce<[number, number, Vertex][]>((t, bv, j) => {
-                        let inter = Vertex.getIntersection(av, bv);
-                        if (inter) {
-                            t.push([inter[0], inter[1], bv]);
-                            bverts[j] = false;
-                        }
-                        return t;
-                    }, [])
-                    .sort((lhs, rhs) => lhs[0] - rhs[0])
-                    .forEach(inter => {
-                        let bv = inter[2];
-                        let newPt = av.getInterpolated(inter[0]);
-                        let newPtIndex = s.points.length;
-                        s.points.push(newPt);
-                        s.vertices.push(
-                            // first part of av split
-                            new Vertex(s, lastPtIndex, newPtIndex, av.norm),
-                            // bv split
-                            new Vertex(s, bv.ptAIndex + bis, newPtIndex, bv.norm),
-                            new Vertex(s, newPtIndex, bv.ptBIndex + bis, bv.norm)
-                        )
-                        lastPtIndex = newPtIndex;
-                    });
-                s.vertices.push(new Vertex(s, lastPtIndex, av.ptBIndex, av.norm));
-            });
-            bverts.forEach((toAdd, i) => {
-                if (!toAdd) return;
-                let bv = b.vertices[i];
-                s.vertices.push(new Vertex(s, bv.ptAIndex + bis, bv.ptBIndex + bis, bv.norm, bv.dir));
-            });
-
             s.computeSize();
 
             return s;
