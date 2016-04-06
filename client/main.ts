@@ -4,7 +4,8 @@
 /// <reference path="lib/render-pass.d.ts" />
 /// <reference path="lib/shader-pass.d.ts" />
 /// <reference path="graph.ts" />
-/// <reference path="geo.ts" />
+/// <reference path="geo/canvas-renderer.ts" />
+/// <reference path="geo/shape.ts" />
 /// <reference path="input.ts" />
 /// <reference path="dungeon.ts" />
 
@@ -86,6 +87,24 @@ document.body.appendChild(geoRender.canvas);
 var shape = geo.Shape.union(
     geo.Shape.fromDefinitions(
         [
+            new THREE.Vector2(25, 25),
+            new THREE.Vector2(50, 0),
+            new THREE.Vector2(40, 80),
+            new THREE.Vector2(30, 90),
+            new THREE.Vector2(80, 90),
+            new THREE.Vector2(35, 40)
+        ],
+        [
+            [5, 0, true],
+            [3, 4, true],
+            [0, 3, true],
+            [4, 1, true],
+            [1, 2, true],
+            [2, 5, true],
+        ]
+    ),
+    geo.Shape.fromDefinitions(
+        [
             new THREE.Vector2(0, 10),
             new THREE.Vector2(100, 10),
             new THREE.Vector2(0, 100),
@@ -98,24 +117,6 @@ var shape = geo.Shape.union(
             [1, 3, false],
             [3, 4, false],
             [4, 2, false]
-        ]
-    ),
-    geo.Shape.fromDefinitions(
-        [
-            new THREE.Vector2(25, 25),
-            new THREE.Vector2(50, 0),
-            new THREE.Vector2(40, 80),
-            new THREE.Vector2(30, 90),
-            new THREE.Vector2(80, 90),
-            new THREE.Vector2(35, 40)
-        ],
-        [
-            [0, 3, true],
-            [3, 4, true],
-            [4, 1, true],
-            [1, 2, true],
-            [2, 5, true],
-            [5, 0, true],
         ]
     )
 );
