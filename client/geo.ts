@@ -24,11 +24,11 @@ module geo {
             // we also have that if |A| = 0, then the lines are parallel
             // Finally, we must also consider the cases where
             // c_1 and c_2 lie outside the vertices
-            // Nicely, because we do end - start for finding the dirs
+            // Nicely, because we do (end - start) for finding the directions
             // then if c_1 or c_2 lie outside of [0, 1]
             // TODO: Before we actually start computing things left and right, we can do a simple AABB check to limit the calculations
-            var startA = a.getPtA(), endA = a.getPtB();
-            var startB = b.getPtA(), endB = b.getPtB();
+            var startA = a.getPtA();
+            var startB = b.getPtA();
             var dirA = a.getDir(), dirB = b.getDir();
 
             var det = - (dirA.x * dirB.y) + (dirB.x * dirA.y);
@@ -46,16 +46,19 @@ module geo {
             return [cA, cB];
         }
         static getPtIntersection(v: Vertex, p: THREE.Vector2): number {
-            // If you declare p as a vertex with start = p and dir = (1, 0),
-            // then the algo simplifies to this
             var start = v.getPtA();
             var dir = v.getDir();
 
+            // Naturally, if it's parallel to our line of doom, then it's doomed
             if (dir.y === 0) return null;
 
             var diffX = p.x - start.x, diffY = p.y - start.y;
-            let vertexC = diffY / dir.y;
-            return (- dir.y * diffX + dir.x * diffY) / dir.y;
+
+            var cV = diffY / dir.y;
+            if (cV < 0 || cV > 1) return null;
+
+            var c = (- dir.y * diffX + dir.x * diffY) / dir.y;
+            return c;
         }
 
         constructor(
@@ -92,7 +95,7 @@ module geo {
                 (this.dir = this.getPtB().clone().sub(this.getPtA()));
         }
         isInside(pt: THREE.Vector2) {
-            return this.norm.dot(pt) > 0;
+            return this.norm.dot(pt) < 0;
         }
         newSource(ptSource: PtSource, shift?: number): Vertex {
             shift = shift || 0;
@@ -130,9 +133,131 @@ module geo {
             return shape;
         }
 
-        static newUnion(a: Shape, b: Shape): Shape {
+        static buildIntersections(vert: Vertex,
+            verts: Vertex[], vertsFate: Fate[],
+            ptAFate: boolean, ptBFate: boolean
+        ): [
+            [number, number, Vertex, number][],
+            number[], number[]
+        ] {
+            let inters: [number, number, Vertex, number][] = [];
+            let ptA = vert.getPtA(), ptB = vert.getPtB();
+            let ptAInters: number[] = ptAFate && [];
+            let ptBInters: number[] = ptBFate && [];
 
+            for (let i = verts.length; i--;) {
+                if (vertsFate[i] === Fate.DEAD) continue;
+                let other = verts[i];
+
+                let inter = Vertex.getIntersection(vert, other);
+                if (inter) inters.push([inter[0], inter[1], other, i]);
+
+                if (ptAInters) {
+                    let aInter = Vertex.getPtIntersection(other, ptA);
+                    if (aInter) ptAInters.push(aInter);
+                }
+
+                if (ptBInters) {
+                    let bInter = Vertex.getPtIntersection(other, ptB);
+                    if (bInter) ptBInters.push(bInter);
+                }
+            }
+            return [inters, ptAInters, ptBInters];
+        }
+        static isInside(ptInters: number[]): boolean {
+            let under0 = 0;
+            let over0 = 0;
+            ptInters.forEach(inter =>
+                (inter > 0 ? over0++ :
+                (inter < 0 ? under0++ :
+                0)));
+            if (under0 % 2 !== over0 % 2) throw 'Your fate is borked';
+            return (under0 % 2) === 1;
+        }
+        static split(s: Shape, ptsFate: Fate[],
+            aVert: Vertex,
+            aVerts: Vertex[], aVertsFate: Fate[],
+            bVerts: Vertex[], bVertsFate: Fate[],
+            inters: [number, number, Vertex, number][]
+        ) {
+            let ptA = aVert.getPtA();
+            let lastIndex = aVert.ptAIndex;
+            let alive: boolean = undefined;
+            inters.sort((lhs, rhs) => lhs[0] - rhs[0]).forEach(inter => {
+                let bVert = inter[2];
+                alive = !(alive === undefined ?
+                    bVert.isInside(ptA) :
+                    alive);
+
+                let newPt = aVert.getInterpolated(inter[0]);
+                let newPtIndex = s.points.length;
+
+                s.points.push(newPt);
+                ptsFate[newPtIndex] = Fate.ALIVE;
+
+                // Note that we cannot conclude on the fate of these
+                // vertices yet
+                let j = inter[3];
+                bVerts[j] = new Vertex(s,
+                    bVert.ptAIndex, newPtIndex,
+                    bVert.norm
+                );
+                bVerts.push(new Vertex(s,
+                    newPtIndex, bVert.ptBIndex,
+                    bVert.norm
+                ));
+
+                if (alive) {
+                    aVertsFate[aVertsFate.length] = Fate.ALIVE;
+                    aVerts.push(new Vertex(s,
+                        lastIndex, newPtIndex,
+                        aVert.norm
+                    ));
+                }
+                lastIndex = newPtIndex;
+            });
+            if (alive) {
+                aVertsFate[aVertsFate.length] = Fate.ALIVE;
+                aVerts.push(new Vertex(s,
+                    lastIndex, aVert.ptBIndex,
+                    aVert.norm
+                ));
+            }
+        }
+        static resolveFate(vert: Vertex, i: number,
+            ptAInters: number[], ptBInters: number[],
+            vertsFate: Fate[], ptsFate: Fate[]
+        ): any {
+            let aFate = ptsFate[vert.ptAIndex];
+            let bFate = ptsFate[vert.ptBIndex];
+            if (aFate === Fate.DEAD || bFate === Fate.DEAD)
+                // YOU'VE MET WITH A TERRIBLE FATE, HAVEN'T YOU?
+                return Shape.kill(i, vert, vertsFate, ptsFate);
+
+            if (aFate === undefined) {
+                // The fate of pt-kind hangs in the balance of this point!
+                if (Shape.isInside(ptAInters)) // That point is a spy!
+                    return Shape.kill(i, vert, vertsFate, ptsFate);
+                else ptsFate[vert.ptAIndex] = Fate.ALIVE;
+            }
+            if (bFate === undefined) {
+                // Or maybe this one?...
+                if (Shape.isInside(ptBInters)) // The lies...!
+                    return Shape.kill(i, vert, vertsFate, ptsFate);
+                else ptsFate[vert.ptBIndex] = Fate.ALIVE;
+            }
+
+            // Well, I didn't know you were this edgy...
+            return vertsFate[i] = Fate.ALIVE;
+        }
+        static kill(i: number, vert: Vertex, vertsFate: Fate[], ptsFate: Fate[]) {
+            vertsFate[i] =
+            ptsFate[vert.ptAIndex] =
+            ptsFate[vert.ptBIndex] = Fate.DEAD;
+        }
+        static newUnion(a: Shape, b: Shape): Shape {
             let s = new Shape();
+
             s.points = a.points.concat(b.points);
             let ptsFate: Fate[] = [];
 
@@ -144,54 +269,73 @@ module geo {
             let bVertsFate: Fate[] = [];
 
             for (let i = aVerts.length; i--;) {
+                // The dead can rot for all I care
+                if (aVertsFate[i] === Fate.DEAD) continue;
                 let aVert = aVerts[i];
-
-                // Since vertices are not ordered, we are handling intersections in
-                // two steps so that we can handle them properly; liveliness depends
-                // on it
-                let inters: [number, number, Vertex, number][] = [];
-                for (let j = bVerts.length; j--;) {
-                    let bVert = bVerts[j];
-                    let inter = Vertex.getIntersection(aVert, bVert);
-                    if (inter) inters.push([inter[0], inter[1], bVert, j]);
-                }
+                let intersResults = Shape.buildIntersections(aVert,
+                    bVerts, bVertsFate,
+                    ptsFate[aVert.ptAIndex] === undefined,
+                    ptsFate[aVert.ptBIndex] === undefined
+                );
+                let inters = intersResults[0];
                 if (inters.length) {
+                    // Because splicing the vertex, would be a butt-load of ass,
+                    // we just flag it as dead
+                    // It's dead jim
                     aVertsFate[i] = Fate.DEAD;
-                    // Since we have found intersections, then we can split and
-                    // determine our fate
-                    let lastIndex = aVert.ptAIndex;
-                    let alive: boolean = undefined;
-                    inters
-                        .sort((lhs, rhs) => lhs[0] - rhs[0])
-                        .forEach(inter => {
-                            let bVert = inter[2];
-                            let j = inter[3];
-                            alive = !(alive === undefined ?
-                                bVert.isInside(aVert.getPtA()) :
-                                alive);
-
-                            bVertsFate[]
-
-                            if (bVert.isInside(aVert.getPtA())) {
-                                // Because the starting pt of a is inside b, then it
-                                // must die
-                                ptsFate[];
-                            }
-                        });
+                    Shape.split(s, ptsFate,
+                        aVert,
+                        aVerts, aVertsFate,
+                        bVerts, bVertsFate,
+                        inters
+                    );
                 } else {
-                    // Because there were no intersections, then we need to check
-                    // the points to attempt to find our fate; if either of the
-                    // connecting points is dead, then this is dead as well and we
-                    // can propagate the fate
-                    if (ptsFate[aVert.ptAIndex] === Fate.DEAD ||
-                        ptsFate[aVert.ptBIndex] === Fate.DEAD
-                    ) {
-                        aVertsFate[i] =
-                        ptsFate[aVert.ptAIndex] =
-                        ptsFate[aVert.ptBIndex] = Fate.DEAD;
-                    }
+                    Shape.resolveFate(aVert, i,
+                        intersResults[1], intersResults[2],
+                        aVertsFate, ptsFate
+                    );
                 }
             }
+
+            // Once we are through with the whole aVerts shenanigans, then normally
+            // every possible split has been done; all that remains is identifying
+            // what goes and what stays in the land of bVerts
+            for (let i = bVerts.length; i--;) {
+                if (bVertsFate[i] === Fate.DEAD) continue;
+
+                let bVert = bVerts[i];
+                let ptA = bVert.getPtA();
+                let ptB = bVert.getPtB();
+                let ptAInters: number[] = [];
+                let ptBInters: number[] = [];
+                for (let j = aVerts.length; j--;) {
+                    let aVert = aVerts[j];
+                    let aInter = Vertex.getPtIntersection(aVert, ptA);
+                    if (aInter) ptAInters.push(aInter);
+                    let bInter = Vertex.getPtIntersection(bVert, ptB);
+                    if (bInter) ptBInters.push(bInter);
+                }
+
+                Shape.resolveFate(bVert, i,
+                    ptAInters, ptBInters,
+                    bVertsFate, ptsFate
+                );
+            }
+
+            let vertexFilter = (fates: Fate[]) => (vert: Vertex, i: number) => {
+                switch (fates[i]) {
+                    case Fate.ALIVE:
+                        return true;
+                    case Fate.DEAD:
+                        return false;
+                    default:
+                        throw 'There appears to be an algorithmic error';
+                }
+            };
+            s.vertices = aVerts.filter(vertexFilter(aVertsFate))
+                .concat(bVerts.filter(vertexFilter(bVertsFate)));
+            s.pruneDeadPoints(ptsFate);
+            s.computeSize();
 
             return s;
         }
@@ -259,6 +403,9 @@ module geo {
                 max.max(point);
             });
             this.size = max;
+        }
+        pruneDeadPoints(ptFates: Fate[]) {
+            console.warn('Pruning not implemented');
         }
     }
 
