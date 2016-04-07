@@ -11,6 +11,7 @@
 
 /* Scene */
 var scene = new THREE.Scene();
+scene.add(new THREE.AmbientLight(0x111111));
 
 /* Camera */
 var camera = new THREE.PerspectiveCamera(
@@ -19,7 +20,8 @@ var camera = new THREE.PerspectiveCamera(
     0.1, // near
     1000 // far
 );
-camera.position.set(0, 0, 0);
+camera.position.set(0, 0.5, 0);
+var camLight = new THREE.PointLight(0xffffff, 1, 3, 3);
 
 /* textures */
 var loader = new THREE.TextureLoader();
@@ -45,8 +47,6 @@ var mortarMaterial = new THREE.MeshPhongMaterial({
     map: testMortarTexture,
     normalMap: testMortarNormal
 });
-
-dungeon.populate(scene, new THREE.MultiMaterial([brickMaterial, mortarMaterial]));
 
 /* Renderer */
 var renderer = new THREE.WebGLRenderer({
@@ -82,16 +82,16 @@ effect.renderToScreen = true;
 composer.addPass(effect);
 
 /* Geo render */
-var geoRender = new geo.CanvasRenderer();
-document.body.appendChild(geoRender.canvas);
+//var geoRender = new geo.CanvasRenderer();
+//document.body.appendChild(geoRender.canvas);
 var shape = geo.Shape.union(
     geo.Shape.fromDefinitions(
         [
+            new THREE.Vector2(0, 1),
+            new THREE.Vector2(10, 1),
             new THREE.Vector2(0, 10),
-            new THREE.Vector2(100, 10),
-            new THREE.Vector2(0, 100),
-            new THREE.Vector2(50, 50),
-            new THREE.Vector2(25, 50)
+            new THREE.Vector2(5, 5),
+            new THREE.Vector2(2.5, 5)
         ],
         [
             [0, 1, false],
@@ -103,13 +103,13 @@ var shape = geo.Shape.union(
     ),
     geo.Shape.fromDefinitions(
         [
-            new THREE.Vector2(25, 25),
-            new THREE.Vector2(50, 0),
-            new THREE.Vector2(40, 80),
-            new THREE.Vector2(30, 90),
-            new THREE.Vector2(80, 90),
-            new THREE.Vector2(35, 40),
-            new THREE.Vector2(30, 30)
+            new THREE.Vector2(2.5, 2.5),
+            new THREE.Vector2(5, 0),
+            new THREE.Vector2(4, 8),
+            new THREE.Vector2(3, 9),
+            new THREE.Vector2(8, 9),
+            new THREE.Vector2(3.5, 4),
+            new THREE.Vector2(3, 3)
         ],
         [
             [5, 6, true],
@@ -122,6 +122,11 @@ var shape = geo.Shape.union(
         ]
     )
 );
+shape.recenter();
+scene.add(new THREE.Mesh(
+    dungeon.render(shape),
+    new THREE.MultiMaterial([brickMaterial, mortarMaterial])
+));
 
 /* Size */
 window.onresize = event => {
@@ -137,8 +142,8 @@ window.onresize = event => {
     renderer.setSize(x, y, false);
     composer.setSize(x, y);
 
-    geoRender.updateSize();
-    geoRender.render(shape);
+    //geoRender.updateSize();
+    //geoRender.render(shape);
 };
 window.onresize(null);
 
@@ -149,6 +154,7 @@ var camControl = new input.MouseCamera();
 /* Position */
 var moveAlongPitch = 0, moveAlongYaw = 0;
 scene.add(camera);
+scene.add(camLight);
 
 /* Render */
 var lastRender = 0;
@@ -168,6 +174,7 @@ function render() {
 
         camera.position.add(dir);
         camera.setRotationFromEuler(camControl.euler);
+        camLight.position.copy(camera.position);
     });
 
     composer.render();

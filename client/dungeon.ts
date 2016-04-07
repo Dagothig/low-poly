@@ -2,8 +2,11 @@
 /// <reference path="graph.ts" />
 /// <reference path="rnd.ts" />
 /// <reference path="lib/three.d.ts" />
+/// <reference path="geo/shape.ts" />
+/// <reference path="geo/primitive.ts" />
 
 module dungeon {
+
 
     export interface Renderer<N, V, R> {
         render(node: graph.Node<N, V>): R;
@@ -12,6 +15,57 @@ module dungeon {
     class Room {
         position: THREE.Vector3;
         mesh: THREE.Mesh[];
+    }
+
+    export function render(shape: geo.Shape): THREE.Geometry {
+        let geometry = new THREE.Geometry();
+
+        geometry.vertices = shape.points.map(pt => new THREE.Vector3(pt.x, 0, pt.y))
+            .concat(shape.points.map(pt => new THREE.Vector3(pt.x, 1, pt.y)));
+        let shift = shape.points.length;
+
+        shape.vertices.forEach(vertex => {
+            let ptA = vertex.getPtA();
+            let ptB = vertex.getPtB();
+            let computedNorm = ptB.clone().sub(ptA);
+            computedNorm.set(-computedNorm.y, computedNorm.x);
+            computedNorm.setLength(1);
+            let inverseOrder =
+                vertex.norm.x / computedNorm.x < 0 ||
+                vertex.norm.y / computedNorm.y < 0;
+            let normalShift = inverseOrder ? 0 : shift;
+            let inverseShift = inverseOrder ? shift : 0;
+            geometry.faces.push(
+                new THREE.Face3(
+                    vertex.ptBIndex + normalShift,
+                    vertex.ptAIndex + normalShift,
+                    vertex.ptAIndex + inverseShift,
+                    new THREE.Vector3(vertex.norm.x, 0, vertex.norm.y)
+                ),
+                new THREE.Face3(
+                    vertex.ptBIndex + normalShift,
+                    vertex.ptAIndex + inverseShift,
+                    vertex.ptBIndex + inverseShift,
+                    new THREE.Vector3(vertex.norm.x, 0, vertex.norm.y)
+                )
+            );
+
+            let width = vertex.getDir().length();
+            let xScalar = 2 * width;
+            let height = 1;
+            let yScalar = 2;
+            geometry.faceVertexUvs[0].push([
+                new THREE.Vector2(xScalar, yScalar),
+                new THREE.Vector2(0.0, yScalar),
+                new THREE.Vector2(0.0, 0.0)
+            ], [
+                new THREE.Vector2(xScalar, yScalar),
+                new THREE.Vector2(0.0, 0.0),
+                new THREE.Vector2(xScalar, 0.0)
+            ]);
+        })
+
+        return geometry;
     }
 
     export function populate(scene: THREE.Scene, material: THREE.Material) {
@@ -133,10 +187,6 @@ module dungeon {
             );
             scene.add(mesh);
             mesh.position.copy(n.data);
-
-            var point = new THREE.PointLight(0xffffff, 1, 3, 3);
-            scene.add(point);
-            point.position.copy(n.data).add(new THREE.Vector3(0.2, 0.2, 0.2));
         }, v => {
 
         });

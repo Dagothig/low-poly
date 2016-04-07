@@ -69,12 +69,11 @@ Array.prototype.add = function (obj) {
         return false;
 };
 Array.prototype.with = function () {
-    var _this = this;
     var objs = [];
     for (var _i = 0; _i < arguments.length; _i++) {
         objs[_i - 0] = arguments[_i];
     }
-    objs.forEach(function (obj) { return _this.push(obj); });
+    this.push.apply(this, objs);
     return this;
 };
 Array.prototype.remove = function (obj) {
@@ -294,10 +293,21 @@ var geo;
         return Vertex;
     }());
     geo.Vertex = Vertex;
+    var Triangle = (function () {
+        function Triangle() {
+        }
+        Triangle.prototype.construtor = function (ptSource, ptAIndex, ptBIndex, ptCIndex) {
+            this.ptAIndex = ptAIndex;
+            this.ptBIndex = ptBIndex;
+            this.ptCIndex = ptCIndex;
+        };
+        return Triangle;
+    }());
+    geo.Triangle = Triangle;
 })(geo || (geo = {}));
 /// <reference path="../extensions.ts" />
 /// <reference path="../lib/three.d.ts" />
-/// <reference path="vertex.ts" />
+/// <reference path="primitive.ts" />
 var geo;
 (function (geo) {
     var Fate;
@@ -502,12 +512,24 @@ var geo;
                     handlePtFate(i, bVert, aVerts);
             });
             s.vertices = aVerts.concat(bVerts);
-            s.points.forEach(function (pt, i) {
-                if (ptsFates[i] === Fate.DEAD)
-                    pt.set(i * 2, 0);
-                if (ptsFates[i] === undefined)
-                    throw 'Algorithmic deficiency';
-            });
+            for (var i = s.points.length; i--;) {
+                var fate = ptsFates[i];
+                if (fate !== Fate.DEAD)
+                    continue;
+                for (var j = s.vertices.length; j--;) {
+                    var vert = s.vertices[j];
+                    if (vert.ptAIndex === i || vert.ptBIndex === i) {
+                        s.vertices.splice(j, 1);
+                    }
+                    else {
+                        if (vert.ptAIndex > i)
+                            vert.ptAIndex--;
+                        if (vert.ptBIndex > i)
+                            vert.ptBIndex--;
+                    }
+                }
+                s.points.splice(i, 1);
+            }
             s.computeSize();
             return s;
         };
@@ -520,7 +542,24 @@ var geo;
                 min.min(point);
                 max.max(point);
             });
-            this.size = max;
+            return this.size = max;
+        };
+        Shape.prototype.recenter = function () {
+            function medianOf(arr, func) {
+                var sorted = arr.slice().sort(function (lhs, rhs) { return func(lhs) - func(rhs); });
+                if (sorted.length % 2 === 0) {
+                    var lower = sorted[sorted.length / 2 - 1];
+                    var upper = sorted[sorted.length / 2];
+                    return (func(lower) + func(upper)) / 2;
+                }
+                else {
+                    var pt = sorted[(sorted.length - 1) / 2];
+                    return func(pt);
+                }
+            }
+            var shift = new THREE.Vector2(medianOf(this.points, function (pt) { return pt.x; }), medianOf(this.points, function (pt) { return pt.y; }));
+            this.points.forEach(function (pt) { return pt.sub(shift); });
+            return shift;
         };
         return Shape;
     }());
@@ -762,6 +801,8 @@ var input;
 /// <reference path="graph.ts" />
 /// <reference path="rnd.ts" />
 /// <reference path="lib/three.d.ts" />
+/// <reference path="geo/shape.ts" />
+/// <reference path="geo/primitive.ts" />
 var dungeon;
 (function (dungeon) {
     var Room = (function () {
@@ -769,6 +810,39 @@ var dungeon;
         }
         return Room;
     }());
+    function render(shape) {
+        var geometry = new THREE.Geometry();
+        geometry.vertices = shape.points.map(function (pt) { return new THREE.Vector3(pt.x, 0, pt.y); })
+            .concat(shape.points.map(function (pt) { return new THREE.Vector3(pt.x, 1, pt.y); }));
+        var shift = shape.points.length;
+        shape.vertices.forEach(function (vertex) {
+            var ptA = vertex.getPtA();
+            var ptB = vertex.getPtB();
+            var computedNorm = ptB.clone().sub(ptA);
+            computedNorm.set(-computedNorm.y, computedNorm.x);
+            computedNorm.setLength(1);
+            var inverseOrder = vertex.norm.x / computedNorm.x < 0 ||
+                vertex.norm.y / computedNorm.y < 0;
+            var normalShift = inverseOrder ? 0 : shift;
+            var inverseShift = inverseOrder ? shift : 0;
+            geometry.faces.push(new THREE.Face3(vertex.ptBIndex + normalShift, vertex.ptAIndex + normalShift, vertex.ptAIndex + inverseShift, new THREE.Vector3(vertex.norm.x, 0, vertex.norm.y)), new THREE.Face3(vertex.ptBIndex + normalShift, vertex.ptAIndex + inverseShift, vertex.ptBIndex + inverseShift, new THREE.Vector3(vertex.norm.x, 0, vertex.norm.y)));
+            var width = vertex.getDir().length();
+            var xScalar = 2 * width;
+            var height = 1;
+            var yScalar = 2;
+            geometry.faceVertexUvs[0].push([
+                new THREE.Vector2(xScalar, yScalar),
+                new THREE.Vector2(0.0, yScalar),
+                new THREE.Vector2(0.0, 0.0)
+            ], [
+                new THREE.Vector2(xScalar, yScalar),
+                new THREE.Vector2(0.0, 0.0),
+                new THREE.Vector2(xScalar, 0.0)
+            ]);
+        });
+        return geometry;
+    }
+    dungeon.render = render;
     function populate(scene, material) {
         var node1 = new graph.Node(new THREE.Vector3(0, 0, 0));
         var node2 = new graph.Node(new THREE.Vector3(0, 0, 2));
@@ -848,9 +922,6 @@ var dungeon;
             var mesh = new THREE.Mesh(geometry, material);
             scene.add(mesh);
             mesh.position.copy(n.data);
-            var point = new THREE.PointLight(0xffffff, 1, 3, 3);
-            scene.add(point);
-            point.position.copy(n.data).add(new THREE.Vector3(0.2, 0.2, 0.2));
         }, function (v) {
         });
     }
@@ -868,13 +939,15 @@ var dungeon;
 /// <reference path="dungeon.ts" />
 /* Scene */
 var scene = new THREE.Scene();
+scene.add(new THREE.AmbientLight(0x111111));
 /* Camera */
 var camera = new THREE.PerspectiveCamera(75, //FOV
 4 / 3, // aspect ratio (it will be updated in onresize)
 0.1, // near
 1000 // far
 );
-camera.position.set(0, 0, 0);
+camera.position.set(0, 0.5, 0);
+var camLight = new THREE.PointLight(0xffffff, 1, 3, 3);
 /* textures */
 var loader = new THREE.TextureLoader();
 var onLoaded = function (texture) {
@@ -898,7 +971,6 @@ var mortarMaterial = new THREE.MeshPhongMaterial({
     map: testMortarTexture,
     normalMap: testMortarNormal
 });
-dungeon.populate(scene, new THREE.MultiMaterial([brickMaterial, mortarMaterial]));
 /* Renderer */
 var renderer = new THREE.WebGLRenderer({
     antialias: false
@@ -927,14 +999,14 @@ var effect = new THREE.ShaderPass(testShader);
 effect.renderToScreen = true;
 composer.addPass(effect);
 /* Geo render */
-var geoRender = new geo.CanvasRenderer();
-document.body.appendChild(geoRender.canvas);
+//var geoRender = new geo.CanvasRenderer();
+//document.body.appendChild(geoRender.canvas);
 var shape = geo.Shape.union(geo.Shape.fromDefinitions([
+    new THREE.Vector2(0, 1),
+    new THREE.Vector2(10, 1),
     new THREE.Vector2(0, 10),
-    new THREE.Vector2(100, 10),
-    new THREE.Vector2(0, 100),
-    new THREE.Vector2(50, 50),
-    new THREE.Vector2(25, 50)
+    new THREE.Vector2(5, 5),
+    new THREE.Vector2(2.5, 5)
 ], [
     [0, 1, false],
     [0, 2, true],
@@ -942,13 +1014,13 @@ var shape = geo.Shape.union(geo.Shape.fromDefinitions([
     [3, 4, false],
     [4, 2, false]
 ]), geo.Shape.fromDefinitions([
-    new THREE.Vector2(25, 25),
-    new THREE.Vector2(50, 0),
-    new THREE.Vector2(40, 80),
-    new THREE.Vector2(30, 90),
-    new THREE.Vector2(80, 90),
-    new THREE.Vector2(35, 40),
-    new THREE.Vector2(30, 30)
+    new THREE.Vector2(2.5, 2.5),
+    new THREE.Vector2(5, 0),
+    new THREE.Vector2(4, 8),
+    new THREE.Vector2(3, 9),
+    new THREE.Vector2(8, 9),
+    new THREE.Vector2(3.5, 4),
+    new THREE.Vector2(3, 3)
 ], [
     [5, 6, true],
     [6, 0, true],
@@ -958,6 +1030,8 @@ var shape = geo.Shape.union(geo.Shape.fromDefinitions([
     [1, 2, true],
     [2, 5, true],
 ]));
+shape.recenter();
+scene.add(new THREE.Mesh(dungeon.render(shape), new THREE.MultiMaterial([brickMaterial, mortarMaterial])));
 /* Size */
 window.onresize = function (event) {
     var x = window.innerWidth, y = window.innerHeight;
@@ -968,8 +1042,8 @@ window.onresize = function (event) {
     effect.material.uniforms.resolution.value.set(x, y);
     renderer.setSize(x, y, false);
     composer.setSize(x, y);
-    geoRender.updateSize();
-    geoRender.render(shape);
+    //geoRender.updateSize();
+    //geoRender.render(shape);
 };
 window.onresize(null);
 /* Input */
@@ -978,6 +1052,7 @@ var camControl = new input.MouseCamera();
 /* Position */
 var moveAlongPitch = 0, moveAlongYaw = 0;
 scene.add(camera);
+scene.add(camLight);
 /* Render */
 var lastRender = 0;
 function render() {
@@ -998,6 +1073,7 @@ function render() {
         var dir = camControl.directionFor(moveAlongPitch, moveAlongYaw, 0.01);
         camera.position.add(dir);
         camera.setRotationFromEuler(camControl.euler);
+        camLight.position.copy(camera.position);
     });
     composer.render();
     requestAnimationFrame(render);

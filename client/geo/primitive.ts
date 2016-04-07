@@ -112,4 +112,23 @@ module geo {
             );
         }
     }
+
+    export class Triangle {
+
+        construtor(
+            ptSource: PtSource,
+            ptAIndex: number,
+            ptBIndex: number,
+            ptCIndex: number
+        ) {
+            this.ptAIndex = ptAIndex;
+            this.ptBIndex = ptBIndex;
+            this.ptCIndex = ptCIndex;
+        }
+
+        ptSource: PtSource;
+        ptAIndex: number;
+        ptBIndex: number;
+        ptCIndex: number;
+    }
 }

@@ -50,7 +50,7 @@ Array.prototype.add = function(obj) {
 
 interface Array<T> { with(...objs: T[]): Array<T> }
 Array.prototype.with = function(...objs) {
-    objs.forEach(obj => this.push(obj));
+    this.push.apply(this, objs);
     return this;
 }
 

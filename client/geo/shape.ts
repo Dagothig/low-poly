@@ -1,6 +1,6 @@
 /// <reference path="../extensions.ts" />
 /// <reference path="../lib/three.d.ts" />
-/// <reference path="vertex.ts" />
+/// <reference path="primitive.ts" />
 
 module geo {
     enum Fate {
@@ -214,10 +214,20 @@ module geo {
             });
 
             s.vertices = aVerts.concat(bVerts);
-            s.points.forEach((pt, i) => {
-                if (ptsFates[i] === Fate.DEAD) pt.set(i * 2, 0);
-                if (ptsFates[i] === undefined) throw 'Algorithmic deficiency';
-            });
+            for (let i = s.points.length; i--;) {
+                let fate = ptsFates[i];
+                if (fate !== Fate.DEAD) continue;
+                for (let j = s.vertices.length; j--;) {
+                    let vert = s.vertices[j];
+                    if (vert.ptAIndex === i || vert.ptBIndex === i) {
+                        s.vertices.splice(j, 1);
+                    } else {
+                        if (vert.ptAIndex > i) vert.ptAIndex--;
+                        if (vert.ptBIndex > i) vert.ptBIndex--;
+                    }
+                }
+                s.points.splice(i, 1);
+            }
             s.computeSize();
             return s;
         }
@@ -226,7 +236,7 @@ module geo {
         vertices: Vertex[];
         size: THREE.Vector2;
 
-        computeSize() {
+        computeSize(): THREE.Vector2 {
             if (!this.points.length) return this.size = new THREE.Vector2();
             var min = this.points[0].clone();
             var max = this.points[0].clone();
@@ -234,7 +244,33 @@ module geo {
                 min.min(point);
                 max.max(point);
             });
-            this.size = max;
+            return this.size = max;
+        }
+
+        recenter(): THREE.Vector2 {
+            function medianOf(
+                arr: THREE.Vector2[],
+                func: (pt: THREE.Vector2) => number
+            ): number {
+                let sorted = arr.slice().sort((lhs, rhs) => func(lhs) - func(rhs));
+                if (sorted.length % 2 === 0) {
+                    let lower = sorted[sorted.length / 2 - 1];
+                    let upper = sorted[sorted.length / 2];
+                    return (func(lower) + func(upper)) / 2;
+                }
+                else {
+                    let pt = sorted[(sorted.length - 1) / 2];
+                    return func(pt);
+                }
+            }
+
+            let shift = new THREE.Vector2(
+                medianOf(this.points, pt => pt.x),
+                medianOf(this.points, pt => pt.y)
+            );
+            this.points.forEach(pt => pt.sub(shift));
+
+            return shift;
         }
     }
 }
