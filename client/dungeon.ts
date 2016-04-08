@@ -17,53 +17,88 @@ module dungeon {
         mesh: THREE.Mesh[];
     }
 
-    export function render(shape: geo.Shape): THREE.Geometry {
+    export function render(
+        shape: geo.Shape, trigs: geo.Triangle[]
+    ): THREE.Geometry {
         let geometry = new THREE.Geometry();
 
         geometry.vertices = shape.points.map(pt => new THREE.Vector3(pt.x, 0, pt.y))
             .concat(shape.points.map(pt => new THREE.Vector3(pt.x, 1, pt.y)));
         let shift = shape.points.length;
 
-        shape.vertices.forEach(vertex => {
-            let ptA = vertex.getPtA();
-            let ptB = vertex.getPtB();
+        shape.edges.forEach(edge => {
+            let ptA = edge.getPtA();
+            let ptB = edge.getPtB();
             let computedNorm = ptB.clone().sub(ptA);
             computedNorm.set(-computedNorm.y, computedNorm.x);
             computedNorm.setLength(1);
             let inverseOrder =
-                vertex.norm.x / computedNorm.x < 0 ||
-                vertex.norm.y / computedNorm.y < 0;
+                edge.norm.x / computedNorm.x < 0 ||
+                edge.norm.y / computedNorm.y < 0;
             let normalShift = inverseOrder ? 0 : shift;
             let inverseShift = inverseOrder ? shift : 0;
             geometry.faces.push(
                 new THREE.Face3(
-                    vertex.ptBIndex + normalShift,
-                    vertex.ptAIndex + normalShift,
-                    vertex.ptAIndex + inverseShift,
-                    new THREE.Vector3(vertex.norm.x, 0, vertex.norm.y)
+                    edge.ptBIndex + normalShift,
+                    edge.ptAIndex + normalShift,
+                    edge.ptAIndex + inverseShift,
+                    new THREE.Vector3(edge.norm.x, 0, edge.norm.y)
                 ),
                 new THREE.Face3(
-                    vertex.ptBIndex + normalShift,
-                    vertex.ptAIndex + inverseShift,
-                    vertex.ptBIndex + inverseShift,
-                    new THREE.Vector3(vertex.norm.x, 0, vertex.norm.y)
+                    edge.ptBIndex + normalShift,
+                    edge.ptAIndex + inverseShift,
+                    edge.ptBIndex + inverseShift,
+                    new THREE.Vector3(edge.norm.x, 0, edge.norm.y)
                 )
             );
 
-            let width = vertex.getDir().length();
+            let width = edge.getDir().length();
             let xScalar = 2 * width;
+            xScalar = Math.max(xScalar - xScalar%0.5, 1);
+            let xShift = 0.25;
             let height = 1;
             let yScalar = 2;
             geometry.faceVertexUvs[0].push([
-                new THREE.Vector2(xScalar, yScalar),
-                new THREE.Vector2(0.0, yScalar),
-                new THREE.Vector2(0.0, 0.0)
+                new THREE.Vector2(xShift + xScalar, yScalar),
+                new THREE.Vector2(xShift, yScalar),
+                new THREE.Vector2(xShift, 0.0)
             ], [
-                new THREE.Vector2(xScalar, yScalar),
-                new THREE.Vector2(0.0, 0.0),
-                new THREE.Vector2(xScalar, 0.0)
+                new THREE.Vector2(xShift + xScalar, yScalar),
+                new THREE.Vector2(xShift, 0.0),
+                new THREE.Vector2(xShift + xScalar, 0.0)
             ]);
-        })
+        });
+
+        trigs.forEach(trig => {
+            geometry.faces.push(
+                new THREE.Face3(
+                    trig.ptCIndex,
+                    trig.ptBIndex,
+                    trig.ptAIndex,
+                    new THREE.Vector3(0, 1, 0),
+                    null, 1
+                ),
+                new THREE.Face3(
+                    trig.ptAIndex + shift,
+                    trig.ptBIndex + shift,
+                    trig.ptCIndex + shift,
+                    new THREE.Vector3(0, -1, 0),
+                    null, 1
+                )
+            )
+            let ptA = trig.getPtA();
+            let ptB = trig.getPtB();
+            let ptC = trig.getPtC();
+            geometry.faceVertexUvs[0].push([
+                new THREE.Vector2(2 * ptC.x, 2 * -ptC.y),
+                new THREE.Vector2(2 * ptB.x, 2 * -ptB.y),
+                new THREE.Vector2(2 * ptA.x, 2 * -ptA.y)
+            ], [
+                new THREE.Vector2(2 * ptA.x, 2 * ptA.y),
+                new THREE.Vector2(2 * ptB.x, 2 * ptB.y),
+                new THREE.Vector2(2 * ptC.x, 2 * ptC.y)
+            ]);
+        });
 
         return geometry;
     }

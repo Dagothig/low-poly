@@ -213,8 +213,31 @@ var graph;
 /// <reference path="../lib/three.d.ts" />
 var geo;
 (function (geo) {
-    var Vertex = (function () {
-        function Vertex(ptSource, ptAIndex, ptBIndex, norm, normC, dir) {
+    function getIntersection(ptA, dirA, ptB, dirB) {
+        // Let a_1, a_2, b_1, b_2 e |R^2 and c_1, c_2 e |R
+        // If we have the lines c_1 * a_1 + b_1 and c_2 * a_2 + b_2
+        // Such that they define the edges a and b
+        // with a_1 = [a_11, a_12], a_2 = [a_21, a_22]
+        // Then we are wondering about the linear equation
+        // c_1 * a_1 + b_1 = c_2 * a_2 + b_2 with the 'a's and 'b's known
+        // then, let
+        // A = [a_1 a_2]
+        // c = [c_1, c_2], b = [b_1 b_2]
+        // and we can write
+        // Ac = b <=> c = A^-1 * b
+        // with A^-1 = 1/|A| * adj(A)
+        var det = -(dirA.x * dirB.y) + (dirB.x * dirA.y);
+        if (Math.abs(det) < geo.DELTA)
+            return undefined;
+        var invDet = 1 / det;
+        var diffX = ptB.x - ptA.x, diffY = ptB.y - ptA.y;
+        var cA = invDet * (-dirB.y * diffX + dirB.x * diffY);
+        var cB = invDet * (-dirA.y * diffX + dirA.x * diffY);
+        return [cA, cB];
+    }
+    geo.DELTA = 0.0001;
+    var Edge = (function () {
+        function Edge(ptSource, ptAIndex, ptBIndex, norm, normC, dir) {
             this.ptSource = ptSource;
             this.ptAIndex = ptAIndex;
             this.ptBIndex = ptBIndex;
@@ -222,84 +245,79 @@ var geo;
             this.normC = normC;
             this.dir = dir;
         }
-        Vertex.getIntersection = function (a, b) {
-            // Let a_1, a_2, b_1, b_2 e |R^2 and c_1, c_2 e |R
-            // If we have the lines c_1 * a_1 + b_1 and c_2 * a_2 + b_2
-            // Such that they define the vertices a and b
-            // with a_1 = [a_11, a_12], a_2 = [a_21, a_22]
-            // Then we are wondering about the linear equation
-            // c_1 * a_1 + b_1 = c_2 * a_2 + b_2 with the 'a's and 'b's known
-            // then, let
-            // A = [a_1 a_2]
-            // c = [c_1, c_2], b = [b_1 b_2]
-            // and we can write
-            // Ac = b <=> c = A^-1 * b
-            // with A^-1 = 1/|A| * adj(A)
-            // we also have that if |A| = 0, then the lines are parallel
-            // Finally, we must also consider the cases where
-            // c_1 and c_2 lie outside the vertices
-            // Nicely, because we do (end - start) for finding the directions
-            // then if c_1 or c_2 lie outside of [0, 1]
-            // TODO: Before we actually start computing things left and right, we can do a simple AABB check to limit the calculations
-            var startA = a.getPtA();
-            var startB = b.getPtA();
-            var dirA = a.getDir(), dirB = b.getDir();
-            var det = -(dirA.x * dirB.y) + (dirB.x * dirA.y);
-            if (det === 0)
+        Edge.getIntersection = function (a, b) {
+            var startA = a.getPtA(), endA = a.getPtB();
+            var startB = b.getPtA(), endB = b.getPtB();
+            if (Math.min(startA.x, endA.x) - Math.max(startB.x, endB.x) > geo.DELTA ||
+                Math.min(startB.x, endB.x) - Math.max(startA.x, endA.x) > geo.DELTA ||
+                Math.min(startA.y, endA.y) - Math.max(startB.y, endB.y) > geo.DELTA ||
+                Math.min(startB.y, endB.y) - Math.max(startA.y, endA.y) > geo.DELTA)
                 return null;
-            var invDet = 1 / det;
-            var diffX = startB.x - startA.x, diffY = startB.y - startA.y;
-            var cA = invDet * (-dirB.y * diffX + dirB.x * diffY);
-            if (cA < 0 || cA > 1)
+            var inter = getIntersection(startA, a.getDir(), startB, b.getDir());
+            if (!inter)
+                return inter;
+            if (inter[0] < -geo.DELTA || inter[0] > 1 + geo.DELTA)
                 return null;
-            var cB = invDet * (-dirA.y * diffX + dirA.x * diffY);
-            if (cB < 0 || cB > 1)
+            if (inter[1] < -geo.DELTA || inter[1] > 1 + geo.DELTA)
                 return null;
-            return [cA, cB];
+            return inter;
         };
-        Vertex.getPtIntersection = function (v, p) {
+        Edge.getPtIntersection = function (v, p, ray) {
             var start = v.getPtA();
             var dir = v.getDir();
-            // Naturally, if it's parallel to our line of doom, then it's doomed
-            if (dir.y === 0)
+            var inter = getIntersection(start, dir, p, ray);
+            if (!inter)
+                return undefined;
+            if (inter[0] < -geo.DELTA || inter[0] > 1 + geo.DELTA)
                 return null;
-            var diffX = p.x - start.x, diffY = p.y - start.y;
-            var cV = diffY / dir.y;
-            if (cV < 0 || cV > 1)
-                return null;
-            var c = (-dir.y * diffX + dir.x * diffY) / dir.y;
-            return c;
+            return inter[1];
         };
-        Vertex.prototype.getPtA = function () {
+        Edge.prototype.getPtA = function () {
             return this.ptSource.points[this.ptAIndex];
         };
-        Vertex.prototype.getPtB = function () {
+        Edge.prototype.getPtB = function () {
             return this.ptSource.points[this.ptBIndex];
         };
-        Vertex.prototype.getInterpolated = function (c) {
+        Edge.prototype.getInterpolated = function (c) {
             return this.getPtA().clone().addScaledVector(this.getDir(), c);
         };
-        Vertex.prototype.getDir = function () {
+        Edge.prototype.getDir = function () {
             return this.dir ||
                 (this.dir = this.getPtB().clone().sub(this.getPtA()));
         };
-        Vertex.prototype.isInside = function (pt) {
-            return this.norm.dot(pt) > this.normC;
+        Edge.prototype.isInside = function (pt) {
+            return this.norm.dot(pt) - this.normC > -geo.DELTA;
         };
-        Vertex.prototype.newSource = function (ptSource, shift) {
+        Edge.prototype.distance = function (pt) {
+            var inter = getIntersection(pt, this.norm, this.getPtA(), this.getDir());
+            if (inter[1] < 0)
+                return this.getPtA().clone().distanceToSquared(pt);
+            if (inter[1] > 1)
+                return this.getPtB().clone().distanceToSquared(pt);
+            return inter[0] * inter[0];
+        };
+        Edge.prototype.newSource = function (ptSource, shift) {
             shift = shift || 0;
-            return new Vertex(ptSource, this.ptAIndex + shift, this.ptBIndex + shift, this.norm, this.normC, this.dir);
+            return new Edge(ptSource, this.ptAIndex + shift, this.ptBIndex + shift, this.norm, this.normC, this.dir);
         };
-        return Vertex;
+        return Edge;
     }());
-    geo.Vertex = Vertex;
+    geo.Edge = Edge;
     var Triangle = (function () {
-        function Triangle() {
-        }
-        Triangle.prototype.construtor = function (ptSource, ptAIndex, ptBIndex, ptCIndex) {
+        function Triangle(ptSource, ptAIndex, ptBIndex, ptCIndex) {
+            this.ptSource = ptSource;
             this.ptAIndex = ptAIndex;
             this.ptBIndex = ptBIndex;
             this.ptCIndex = ptCIndex;
+        }
+        Triangle.prototype.getPtA = function () {
+            return this.ptSource.points[this.ptAIndex];
+        };
+        Triangle.prototype.getPtB = function () {
+            return this.ptSource.points[this.ptBIndex];
+        };
+        Triangle.prototype.getPtC = function () {
+            return this.ptSource.points[this.ptCIndex];
         };
         return Triangle;
     }());
@@ -315,13 +333,14 @@ var geo;
         Fate[Fate["DEAD"] = 0] = "DEAD";
         Fate[Fate["ALIVE"] = 1] = "ALIVE";
     })(Fate || (Fate = {}));
+    var RAY = new THREE.Vector2(Math.random() - 0.5, Math.random() - 0.5);
     var Shape = (function () {
         function Shape() {
         }
-        Shape.fromDefinitions = function (points, vertices) {
+        Shape.fromDefinitions = function (points, edges) {
             var shape = new Shape();
             shape.points = points;
-            shape.vertices = vertices.map(function (def) {
+            shape.edges = edges.map(function (def) {
                 var ptA = shape.points[def[0]];
                 var ptB = shape.points[def[1]];
                 var norm = ptB.clone().sub(ptA);
@@ -330,50 +349,65 @@ var geo;
                 if (def[2])
                     norm.multiplyScalar(-1);
                 var normC = norm.x ? (ptA.x * norm.x) : (ptB.y * norm.y);
-                return new geo.Vertex(shape, def[0], def[1], norm, normC);
+                return new geo.Edge(shape, def[0], def[1], norm, normC);
             });
             shape.computeSize();
             return shape;
+        };
+        Shape.isInside = function (pt, edges) {
+            var smaller = 0;
+            var bigger = 0;
+            for (var i = edges.length; i--;) {
+                var edge = edges[i];
+                var inter = geo.Edge.getPtIntersection(edge, pt, RAY);
+                if (inter === null)
+                    continue;
+                if (inter < 0)
+                    smaller++;
+                if (inter > 0)
+                    bigger++;
+            }
+            return (smaller % 2 !== 0) && (bigger % 2 !== 0);
         };
         Shape.union = function (a, b) {
             var s = new Shape();
             s.points = a.points.concat(b.points);
             var ptsFates = [];
             var shift = a.points.length;
-            var aVerts = a.vertices.map(function (v) { return v.newSource(s); });
-            var bVerts = b.vertices.map(function (v) { return v.newSource(s, shift); });
+            var aEdges = a.edges.map(function (v) { return v.newSource(s); });
+            var bEdges = b.edges.map(function (v) { return v.newSource(s, shift); });
             function pushorep(rep, arr, i, v) {
                 if (rep)
                     arr[i] = v;
                 else
                     arr.push(v);
             }
-            function split(index, vert, verts, 
-                // c, otherIndex, otherVertex, otherC, newPtIndex
+            function split(index, edge, edges, 
+                // c, otherIndex, otherEdge, otherC, newPtIndex
                 inters) {
                 var replace = true;
-                var ptA = vert.getPtA();
-                var lastIndex = vert.ptAIndex;
+                var ptA = edge.getPtA();
+                var lastIndex = edge.ptAIndex;
                 var alive = undefined;
                 inters
                     .sort(function (lhs, rhs) { return lhs[0] - rhs[0]; })
                     .forEach(function (inter) {
-                    var oVert = inter[2];
+                    var oEdge = inter[2];
                     if (alive === undefined) {
-                        alive = !oVert.isInside(ptA);
+                        alive = !oEdge.isInside(ptA);
                         // If the first one is inside, then it's first pt is inside
                         // as well and must be killed (with fire)
                         if (!alive)
-                            ptsFates[vert.ptAIndex] = Fate.DEAD;
+                            ptsFates[edge.ptAIndex] = Fate.DEAD;
                     }
                     var newPtIndex = inter[4];
                     var newPt;
                     if (!newPtIndex) {
                         newPtIndex = inter[4] = s.points.length;
-                        s.points.push(newPt = vert.getInterpolated(inter[0]));
+                        s.points.push(newPt = edge.getInterpolated(inter[0]));
                     }
                     if (alive) {
-                        pushorep(replace, verts, index, new geo.Vertex(s, lastIndex, newPtIndex, vert.norm, vert.normC));
+                        pushorep(replace, edges, index, new geo.Edge(s, lastIndex, newPtIndex, edge.norm, edge.normC));
                         ptsFates[lastIndex] = Fate.ALIVE;
                         ptsFates[newPtIndex] = Fate.ALIVE;
                         replace = false;
@@ -382,150 +416,124 @@ var geo;
                     alive = !alive;
                 });
                 if (alive) {
-                    pushorep(replace, verts, index, new geo.Vertex(s, lastIndex, vert.ptBIndex, vert.norm, vert.normC));
+                    pushorep(replace, edges, index, new geo.Edge(s, lastIndex, edge.ptBIndex, edge.norm, edge.normC));
                     ptsFates[lastIndex] = Fate.ALIVE;
-                    ptsFates[vert.ptBIndex] = Fate.ALIVE;
+                    ptsFates[edge.ptBIndex] = Fate.ALIVE;
                 }
                 else if (alive === false)
-                    ptsFates[vert.ptBIndex] = Fate.DEAD;
+                    ptsFates[edge.ptBIndex] = Fate.DEAD;
             }
             ;
-            function findFate(ptIndex, verts) {
-                var pt = s.points[ptIndex];
-                var closest = null;
-                var closestInter = null;
-                verts.forEach(function (vert) {
-                    var inter = geo.Vertex.getPtIntersection(vert, pt);
-                    if (!inter)
-                        return;
-                    inter = Math.abs(inter);
-                    if (closestInter === null || inter < closestInter) {
-                        closest = vert;
-                        closestInter = closestInter;
-                    }
-                });
-                return (closest === null || !closest.isInside(pt)) ?
-                    Fate.ALIVE : Fate.DEAD;
-            }
-            function handlePtFate(index, vert, verts) {
-                var fateA = ptsFates[vert.ptAIndex];
-                var fateB = ptsFates[vert.ptBIndex];
+            function handlePtFate(index, edge, edges) {
+                var fateA = ptsFates[edge.ptAIndex];
+                var fateB = ptsFates[edge.ptBIndex];
                 if (fateA === Fate.ALIVE && fateB === Fate.ALIVE) {
                     // live
                     return;
                 }
                 if (fateA === Fate.DEAD || fateB === Fate.DEAD) {
                     if (fateA === undefined)
-                        ptsFates[vert.ptAIndex] = Fate.DEAD;
+                        ptsFates[edge.ptAIndex] = Fate.DEAD;
                     if (fateB === undefined)
-                        ptsFates[vert.ptBIndex] = Fate.DEAD;
+                        ptsFates[edge.ptBIndex] = Fate.DEAD;
                     // die
                     return;
                 }
                 if (fateA === undefined)
-                    ptsFates[vert.ptAIndex] = findFate(vert.ptAIndex, verts);
+                    ptsFates[edge.ptAIndex] = Shape.isInside(edge.getPtA(), edges) ?
+                        Fate.DEAD : Fate.ALIVE;
                 if (fateB === undefined)
-                    ptsFates[vert.ptBIndex] = findFate(vert.ptBIndex, verts);
-                handlePtFate(index, vert, verts);
+                    ptsFates[edge.ptBIndex] = Shape.isInside(edge.getPtB(), edges) ?
+                        Fate.DEAD : Fate.ALIVE;
+                handlePtFate(index, edge, edges);
             }
-            // We can do the aVert splits sooner than the bSplits because we can
-            // fully know after having gone through the bVerts. For the bInters,
+            // We can do the aEdge splits sooner than the bSplits because we can
+            // fully know after having gone through the bEdges. For the bInters,
             // we must wait until we've gone through every pair
             var aNeeded, bNeeded;
             var ptA, ptB;
-            var closestToA, closestToB;
-            var closestInterToA, closestInterToB;
-            // bC aIndex aVert aC, newPtIndex, indexed by bVert index
+            // bC aIndex aEdge aC, newPtIndex, indexed by bEdge index
             var bInters = [];
             var _loop_1 = function(i) {
-                var aVert = aVerts[i];
-                // aC bIndex bVert bC newPtIndex
+                var aEdge = aEdges[i];
+                // aC bIndex bEdge bC newPtIndex
                 var inters = [];
-                aNeeded = ptsFates[aVert.ptAIndex] === undefined;
-                bNeeded = ptsFates[aVert.ptBIndex] === undefined;
-                if (aNeeded) {
-                    closestToA = closestInterToA = null;
-                    ptA = aVert.getPtA();
-                }
-                if (bNeeded) {
-                    closestToB = closestInterToB = null;
-                    ptB = aVert.getPtB();
-                }
-                for (var j = bVerts.length; j--;) {
-                    var bVert = bVerts[j];
+                aNeeded = ptsFates[aEdge.ptAIndex] === undefined;
+                bNeeded = ptsFates[aEdge.ptBIndex] === undefined;
+                var smallerA = 0, smallerB = 0;
+                if (aNeeded)
+                    ptA = aEdge.getPtA();
+                if (bNeeded)
+                    ptB = aEdge.getPtB();
+                for (var j = bEdges.length; j--;) {
+                    var bEdge = bEdges[j];
                     // cA cB
-                    var inter = geo.Vertex.getIntersection(aVert, bVert);
+                    var inter = geo.Edge.getIntersection(aEdge, bEdge);
                     if (inter) {
-                        inters.push([inter[0], j, bVert, inter[1], undefined]);
+                        inters.push([inter[0], j, bEdge, inter[1], undefined]);
                         aNeeded = bNeeded = false;
                     }
                     a: if (aNeeded) {
-                        var inter_1 = geo.Vertex.getPtIntersection(bVert, ptA);
+                        var inter_1 = geo.Edge.getPtIntersection(bEdge, ptA, RAY);
                         if (inter_1 === null)
                             break a;
-                        inter_1 = Math.abs(inter_1);
-                        if (closestInterToA === null || inter_1 < closestInterToA) {
-                            closestInterToA = inter_1;
-                            closestToA = bVert;
-                        }
+                        if (inter_1 < 0)
+                            smallerA++;
                     }
                     b: if (bNeeded) {
-                        var inter_2 = geo.Vertex.getPtIntersection(bVert, ptB);
+                        var inter_2 = geo.Edge.getPtIntersection(bEdge, ptB, RAY);
                         if (inter_2 === null)
                             break b;
-                        inter_2 = Math.abs(inter_2);
-                        if (closestInterToB === null || inter_2 < closestInterToB) {
-                            closestInterToB = inter_2;
-                            closestToB = bVert;
-                        }
+                        if (inter_2 < 0)
+                            smallerB++;
                     }
                 }
-                split(i, aVert, aVerts, inters);
+                split(i, aEdge, aEdges, inters);
                 // Fate is either determined by it's intersections
                 if (inters.length)
                     inters.forEach(function (inter) {
                         var arr = bInters[inter[1]];
                         if (!arr)
                             bInters[inter[1]] = arr = [];
-                        arr.push([inter[3], i, aVert, inter[0], inter[4]]);
+                        arr.push([inter[3], i, aEdge, inter[0], inter[4]]);
                     });
                 else {
                     if (aNeeded)
-                        ptsFates[aVert.ptAIndex] =
-                            (closestToA === null || !closestToA.isInside(ptA)) ?
+                        ptsFates[aEdge.ptAIndex] =
+                            (smallerA % 2 === 0) ?
                                 Fate.ALIVE : Fate.DEAD;
                     if (bNeeded)
-                        ptsFates[aVert.ptBIndex] =
-                            (closestToB === null || !closestToB.isInside(ptB)) ?
+                        ptsFates[aEdge.ptBIndex] =
+                            (smallerB % 2 === 0) ?
                                 Fate.ALIVE : Fate.DEAD;
-                    handlePtFate(i, aVert, bVerts);
+                    handlePtFate(i, aEdge, bEdges);
                 }
             };
-            for (var i = aVerts.length; i--;) {
+            for (var i = aEdges.length; i--;) {
                 _loop_1(i);
             }
-            bVerts.forEach(function (bVert, i) {
+            bEdges.forEach(function (bEdge, i) {
                 var inters = bInters[i];
                 if (inters && inters.length)
-                    split(i, bVert, bVerts, inters);
+                    split(i, bEdge, bEdges, inters);
                 else
-                    handlePtFate(i, bVert, aVerts);
+                    handlePtFate(i, bEdge, aEdges);
             });
-            s.vertices = aVerts.concat(bVerts);
+            s.edges = aEdges.concat(bEdges);
             for (var i = s.points.length; i--;) {
                 var fate = ptsFates[i];
                 if (fate !== Fate.DEAD)
                     continue;
-                for (var j = s.vertices.length; j--;) {
-                    var vert = s.vertices[j];
-                    if (vert.ptAIndex === i || vert.ptBIndex === i) {
-                        s.vertices.splice(j, 1);
+                for (var j = s.edges.length; j--;) {
+                    var edge = s.edges[j];
+                    if (edge.ptAIndex === i || edge.ptBIndex === i) {
+                        s.edges.splice(j, 1);
                     }
                     else {
-                        if (vert.ptAIndex > i)
-                            vert.ptAIndex--;
-                        if (vert.ptBIndex > i)
-                            vert.ptBIndex--;
+                        if (edge.ptAIndex > i)
+                            edge.ptAIndex--;
+                        if (edge.ptBIndex > i)
+                            edge.ptBIndex--;
                     }
                 }
                 s.points.splice(i, 1);
@@ -561,6 +569,105 @@ var geo;
             this.points.forEach(function (pt) { return pt.sub(shift); });
             return shift;
         };
+        Shape.prototype.triangulate = function () {
+            var pts = this.points;
+            var edges = this.edges.slice();
+            var trigs = [];
+            var ptsEdgeRefs = [];
+            var ptsTrigRefs = Array.gen(function (ptI) { return []; }, pts.length);
+            for (var i = edges.length; i--;) {
+                var edge = edges[i];
+                var aEdgeRefs = ptsEdgeRefs[edge.ptAIndex];
+                if (!aEdgeRefs)
+                    aEdgeRefs = ptsEdgeRefs[edge.ptAIndex] = [];
+                aEdgeRefs[edge.ptBIndex] = i;
+                var bEdgeRefs = ptsEdgeRefs[edge.ptBIndex];
+                if (!bEdgeRefs)
+                    bEdgeRefs = ptsEdgeRefs[edge.ptBIndex] = [];
+                bEdgeRefs[edge.ptAIndex] = i;
+            }
+            var tmpEdge = new geo.Edge(this, null, null, null, null, new THREE.Vector2());
+            var tmpPt = new THREE.Vector2();
+            var _loop_2 = function(ptI) {
+                var pt = pts[ptI];
+                var edgeRefs = ptsEdgeRefs[ptI];
+                var trigRefs = ptsTrigRefs[ptI];
+                // Construct all the legal edges
+                tmpEdge.ptAIndex = ptI;
+                ptO: for (var ptOI = pts.length; ptOI--;) {
+                    // Ignore points already connected
+                    if (ptI === ptOI || edgeRefs[ptOI] !== undefined)
+                        continue ptO;
+                    var ptO = pts[ptOI];
+                    var oRefs = ptsEdgeRefs[ptOI];
+                    tmpEdge.ptBIndex = ptOI;
+                    tmpEdge.dir.copy(ptO).sub(pt);
+                    // Before anything determine if the connection is within the
+                    // shape
+                    tmpPt.set((pt.x + ptO.x) / 2, (pt.y + ptO.y) / 2);
+                    if (!Shape.isInside(tmpPt, this_1.edges))
+                        continue ptO;
+                    // Determine if the edge is valid
+                    edge: for (var edgeI = edges.length; edgeI--;) {
+                        var edge = edges[edgeI];
+                        if (edge.ptAIndex === ptI ||
+                            edge.ptAIndex === ptOI ||
+                            edge.ptBIndex === ptI ||
+                            edge.ptBIndex === ptOI)
+                            continue edge;
+                        var inter = geo.Edge.getIntersection(tmpEdge, edge);
+                        if (inter !== null)
+                            continue ptO;
+                    }
+                    // The edge was valid; update edgeRefs and add it to edges
+                    edgeRefs[ptOI] = oRefs[ptI] = edges.length;
+                    edges.push(new geo.Edge(this_1, ptI, ptOI, null, null));
+                }
+                var orderedPtsRefs = [];
+                var ptsAngles = [];
+                for (var ptOIKey in edgeRefs) {
+                    var ptOI = parseInt(ptOIKey);
+                    if (isNaN(ptOI))
+                        continue;
+                    var edge = edges[edgeRefs[ptOI]];
+                    var ptO = edge.ptAIndex === ptI ? edge.getPtB() : edge.getPtA();
+                    var angle = Math.atan2(ptO.y - pt.y, ptO.x - pt.x);
+                    orderedPtsRefs.push(ptOI);
+                    ptsAngles[ptOI] = angle;
+                }
+                orderedPtsRefs = orderedPtsRefs.sort(function (lhsI, rhsI) {
+                    return ptsAngles[lhsI] - ptsAngles[rhsI];
+                });
+                trig: for (var refI = 0; refI < orderedPtsRefs.length; refI++) {
+                    var ptAI = orderedPtsRefs[refI];
+                    var ptBI = orderedPtsRefs[(refI + 1) % orderedPtsRefs.length];
+                    var edgeAB = edges[ptsEdgeRefs[ptAI][ptBI]];
+                    if (!edgeAB)
+                        continue trig;
+                    for (var trigRefI = trigRefs.length; trigRefI--;) {
+                        var trig_1 = trigs[trigRefs[trigRefI]];
+                        if ((trig_1.ptAIndex === ptI ||
+                            trig_1.ptBIndex === ptI ||
+                            trig_1.ptCIndex === ptI) && (trig_1.ptAIndex === ptAI ||
+                            trig_1.ptBIndex === ptAI ||
+                            trig_1.ptCIndex === ptAI) && (trig_1.ptAIndex === ptBI ||
+                            trig_1.ptBIndex === ptBI ||
+                            trig_1.ptCIndex === ptBI))
+                            continue trig;
+                    }
+                    var trig = new geo.Triangle(this_1, ptI, ptAI, ptBI);
+                    trigRefs.push(trigs.length);
+                    ptsTrigRefs[ptAI].push(trigs.length);
+                    ptsTrigRefs[ptBI].push(trigs.length);
+                    trigs.push(trig);
+                }
+            };
+            var this_1 = this;
+            for (var ptI = pts.length; ptI--;) {
+                _loop_2(ptI);
+            }
+            return trigs;
+        };
         return Shape;
     }());
     geo.Shape = Shape;
@@ -579,32 +686,49 @@ var geo;
             this.canvas.width = this.canvas.offsetWidth;
             this.canvas.height = this.canvas.offsetHeight;
         };
-        CanvasRenderer.prototype.render = function (shape) {
+        CanvasRenderer.prototype.render = function (shape, shift, trigs) {
             var _this = this;
             var pad = 16;
             this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
             this.context.lineWidth = 8 * Math.sqrt(((this.canvas.width - pad) * (this.canvas.height - pad)) /
                 (1024 * 768));
             this.context.lineCap = 'round';
-            var ratio = new THREE.Vector2(this.canvas.width - pad * 2, this.canvas.height - pad * 2).divide(shape.size);
-            shape.vertices.forEach(function (vertex) {
-                var start = vertex.getPtA();
-                var end = vertex.getPtB();
-                _this.context.strokeStyle = 'rgb(0, 0, 255)';
+            var ratio = new THREE.Vector2(this.canvas.width - pad * 2, this.canvas.height - pad * 2).divide(shape.size.clone());
+            var start = new THREE.Vector2(), end = new THREE.Vector2();
+            var ptA = new THREE.Vector2();
+            var ptB = new THREE.Vector2();
+            var ptC = new THREE.Vector2();
+            if (trigs)
+                trigs.forEach(function (trig) {
+                    _this.context.fillStyle = 'rgba(255, 255, 255, 0.25)';
+                    _this.context.beginPath();
+                    ptA.copy(trig.getPtA()).add(shift);
+                    ptB.copy(trig.getPtB()).add(shift);
+                    ptC.copy(trig.getPtC()).add(shift);
+                    _this.context.moveTo(pad + ptA.x * ratio.x, pad + ptA.y * ratio.y);
+                    _this.context.lineTo(pad + ptB.x * ratio.x, pad + ptB.y * ratio.y);
+                    _this.context.lineTo(pad + ptC.x * ratio.x, pad + ptC.y * ratio.y);
+                    _this.context.fill();
+                });
+            shape.edges.forEach(function (edge) {
+                start.copy(edge.getPtA()).add(shift);
+                end.copy(edge.getPtB()).add(shift);
+                _this.context.strokeStyle = 'rgba(0, 0, 255, 0.5)';
                 _this.context.beginPath();
                 _this.context.moveTo(pad + (start.x + end.x) / 2 * ratio.x, pad + (start.y + end.y) / 2 * ratio.y);
-                _this.context.lineTo(pad + ((start.x + end.x) / 2 + vertex.norm.x) * ratio.x, pad + ((start.y + end.y) / 2 + vertex.norm.y) * ratio.y);
+                if (edge.norm)
+                    _this.context.lineTo(pad + ((start.x + end.x) / 2 + edge.norm.x) * ratio.x, pad + ((start.y + end.y) / 2 + edge.norm.y) * ratio.y);
                 _this.context.stroke();
-                _this.context.strokeStyle = 'rgb(255, 0, 0)';
+                _this.context.strokeStyle = 'rgba(255, 0, 0, 0.5)';
                 _this.context.beginPath();
                 _this.context.moveTo(pad + start.x * ratio.x, pad + start.y * ratio.y);
                 _this.context.lineTo(pad + end.x * ratio.x, pad + end.y * ratio.y);
                 _this.context.stroke();
             });
             shape.points.forEach(function (pt) {
-                _this.context.strokeStyle = 'rgb(0, 255, 0)';
+                _this.context.strokeStyle = 'rgba(0, 255, 0, 0.5)';
                 _this.context.beginPath();
-                _this.context.arc(pad + (pt.x) * ratio.x, pad + (pt.y) * ratio.y, 1, 0, Math.TAU);
+                _this.context.arc(pad + (pt.x + shift.x) * ratio.x, pad + (pt.y + shift.y) * ratio.y, 1, 0, Math.TAU);
                 _this.context.closePath();
                 _this.context.stroke();
             });
@@ -810,34 +934,51 @@ var dungeon;
         }
         return Room;
     }());
-    function render(shape) {
+    function render(shape, trigs) {
         var geometry = new THREE.Geometry();
         geometry.vertices = shape.points.map(function (pt) { return new THREE.Vector3(pt.x, 0, pt.y); })
             .concat(shape.points.map(function (pt) { return new THREE.Vector3(pt.x, 1, pt.y); }));
         var shift = shape.points.length;
-        shape.vertices.forEach(function (vertex) {
-            var ptA = vertex.getPtA();
-            var ptB = vertex.getPtB();
+        shape.edges.forEach(function (edge) {
+            var ptA = edge.getPtA();
+            var ptB = edge.getPtB();
             var computedNorm = ptB.clone().sub(ptA);
             computedNorm.set(-computedNorm.y, computedNorm.x);
             computedNorm.setLength(1);
-            var inverseOrder = vertex.norm.x / computedNorm.x < 0 ||
-                vertex.norm.y / computedNorm.y < 0;
+            var inverseOrder = edge.norm.x / computedNorm.x < 0 ||
+                edge.norm.y / computedNorm.y < 0;
             var normalShift = inverseOrder ? 0 : shift;
             var inverseShift = inverseOrder ? shift : 0;
-            geometry.faces.push(new THREE.Face3(vertex.ptBIndex + normalShift, vertex.ptAIndex + normalShift, vertex.ptAIndex + inverseShift, new THREE.Vector3(vertex.norm.x, 0, vertex.norm.y)), new THREE.Face3(vertex.ptBIndex + normalShift, vertex.ptAIndex + inverseShift, vertex.ptBIndex + inverseShift, new THREE.Vector3(vertex.norm.x, 0, vertex.norm.y)));
-            var width = vertex.getDir().length();
+            geometry.faces.push(new THREE.Face3(edge.ptBIndex + normalShift, edge.ptAIndex + normalShift, edge.ptAIndex + inverseShift, new THREE.Vector3(edge.norm.x, 0, edge.norm.y)), new THREE.Face3(edge.ptBIndex + normalShift, edge.ptAIndex + inverseShift, edge.ptBIndex + inverseShift, new THREE.Vector3(edge.norm.x, 0, edge.norm.y)));
+            var width = edge.getDir().length();
             var xScalar = 2 * width;
+            xScalar = Math.max(xScalar - xScalar % 0.5, 1);
+            var xShift = 0.25;
             var height = 1;
             var yScalar = 2;
             geometry.faceVertexUvs[0].push([
-                new THREE.Vector2(xScalar, yScalar),
-                new THREE.Vector2(0.0, yScalar),
-                new THREE.Vector2(0.0, 0.0)
+                new THREE.Vector2(xShift + xScalar, yScalar),
+                new THREE.Vector2(xShift, yScalar),
+                new THREE.Vector2(xShift, 0.0)
             ], [
-                new THREE.Vector2(xScalar, yScalar),
-                new THREE.Vector2(0.0, 0.0),
-                new THREE.Vector2(xScalar, 0.0)
+                new THREE.Vector2(xShift + xScalar, yScalar),
+                new THREE.Vector2(xShift, 0.0),
+                new THREE.Vector2(xShift + xScalar, 0.0)
+            ]);
+        });
+        trigs.forEach(function (trig) {
+            geometry.faces.push(new THREE.Face3(trig.ptCIndex, trig.ptBIndex, trig.ptAIndex, new THREE.Vector3(0, 1, 0), null, 1), new THREE.Face3(trig.ptAIndex + shift, trig.ptBIndex + shift, trig.ptCIndex + shift, new THREE.Vector3(0, -1, 0), null, 1));
+            var ptA = trig.getPtA();
+            var ptB = trig.getPtB();
+            var ptC = trig.getPtC();
+            geometry.faceVertexUvs[0].push([
+                new THREE.Vector2(2 * ptC.x, 2 * -ptC.y),
+                new THREE.Vector2(2 * ptB.x, 2 * -ptB.y),
+                new THREE.Vector2(2 * ptA.x, 2 * -ptA.y)
+            ], [
+                new THREE.Vector2(2 * ptA.x, 2 * ptA.y),
+                new THREE.Vector2(2 * ptB.x, 2 * ptB.y),
+                new THREE.Vector2(2 * ptC.x, 2 * ptC.y)
             ]);
         });
         return geometry;
@@ -939,15 +1080,14 @@ var dungeon;
 /// <reference path="dungeon.ts" />
 /* Scene */
 var scene = new THREE.Scene();
-scene.add(new THREE.AmbientLight(0x111111));
 /* Camera */
 var camera = new THREE.PerspectiveCamera(75, //FOV
 4 / 3, // aspect ratio (it will be updated in onresize)
 0.1, // near
 1000 // far
 );
-camera.position.set(0, 0.5, 0);
-var camLight = new THREE.PointLight(0xffffff, 1, 3, 3);
+camera.position.set(0.5, 0.5, 0.5);
+var camLight = new THREE.PointLight(0xffffff, 1, 5, 5);
 /* textures */
 var loader = new THREE.TextureLoader();
 var onLoaded = function (texture) {
@@ -999,21 +1139,9 @@ var effect = new THREE.ShaderPass(testShader);
 effect.renderToScreen = true;
 composer.addPass(effect);
 /* Geo render */
-//var geoRender = new geo.CanvasRenderer();
+var geoRender = new geo.CanvasRenderer();
 //document.body.appendChild(geoRender.canvas);
 var shape = geo.Shape.union(geo.Shape.fromDefinitions([
-    new THREE.Vector2(0, 1),
-    new THREE.Vector2(10, 1),
-    new THREE.Vector2(0, 10),
-    new THREE.Vector2(5, 5),
-    new THREE.Vector2(2.5, 5)
-], [
-    [0, 1, false],
-    [0, 2, true],
-    [1, 3, false],
-    [3, 4, false],
-    [4, 2, false]
-]), geo.Shape.fromDefinitions([
     new THREE.Vector2(2.5, 2.5),
     new THREE.Vector2(5, 0),
     new THREE.Vector2(4, 8),
@@ -1029,9 +1157,23 @@ var shape = geo.Shape.union(geo.Shape.fromDefinitions([
     [4, 1, true],
     [1, 2, true],
     [2, 5, true],
+]), geo.Shape.fromDefinitions([
+    new THREE.Vector2(0, 1),
+    new THREE.Vector2(10, 1),
+    new THREE.Vector2(0, 10),
+    new THREE.Vector2(5, 5),
+    new THREE.Vector2(2.5, 5)
+], [
+    [0, 1, false],
+    [0, 2, true],
+    [1, 3, false],
+    [3, 4, false],
+    [4, 2, false]
 ]));
-shape.recenter();
-scene.add(new THREE.Mesh(dungeon.render(shape), new THREE.MultiMaterial([brickMaterial, mortarMaterial])));
+var geoShift = shape.recenter();
+var now = performance.now();
+var trigs = shape.triangulate();
+scene.add(new THREE.Mesh(dungeon.render(shape, trigs), new THREE.MultiMaterial([brickMaterial, mortarMaterial])));
 /* Size */
 window.onresize = function (event) {
     var x = window.innerWidth, y = window.innerHeight;
@@ -1042,8 +1184,8 @@ window.onresize = function (event) {
     effect.material.uniforms.resolution.value.set(x, y);
     renderer.setSize(x, y, false);
     composer.setSize(x, y);
-    //geoRender.updateSize();
-    //geoRender.render(shape);
+    geoRender.updateSize();
+    geoRender.render(shape, geoShift, trigs);
 };
 window.onresize(null);
 /* Input */

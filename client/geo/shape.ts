@@ -7,15 +7,16 @@ module geo {
         DEAD,
         ALIVE
     }
+    const RAY = new THREE.Vector2(Math.random() - 0.5, Math.random() - 0.5);
     export class Shape implements PtSource {
 
         static fromDefinitions(
             points: THREE.Vector2[],
-            vertices: [number, number, boolean][]
+            edges: [number, number, boolean][]
         ): Shape {
             var shape = new Shape();
             shape.points = points;
-            shape.vertices = vertices.map(def => {
+            shape.edges = edges.map(def => {
                 let ptA = shape.points[def[0]];
                 let ptB = shape.points[def[1]];
                 var norm = ptB.clone().sub(ptA);
@@ -23,10 +24,23 @@ module geo {
                 norm.setLength(1);
                 if (def[2]) norm.multiplyScalar(-1);
                 var normC = norm.x ? (ptA.x * norm.x) : (ptB.y * norm.y);
-                return new Vertex(shape, def[0], def[1], norm, normC);
+                return new Edge(shape, def[0], def[1], norm, normC);
             });
             shape.computeSize();
             return shape;
+        }
+
+        static isInside(pt: THREE.Vector2, edges: Edge[]): boolean {
+            let smaller = 0;
+            let bigger = 0;
+            for (let i = edges.length; i--;) {
+                let edge = edges[i];
+                let inter = Edge.getPtIntersection(edge, pt, RAY);
+                if (inter === null) continue;
+                if (inter < 0) smaller++;
+                if (inter > 0) bigger++;
+            }
+            return (smaller % 2 !== 0) && (bigger % 2 !== 0);
         }
 
         static union(a: Shape, b: Shape): Shape {
@@ -34,8 +48,8 @@ module geo {
             s.points = a.points.concat(b.points);
             let ptsFates: Fate[] = [];
             let shift = a.points.length;
-            let aVerts = a.vertices.map(v => v.newSource(s));
-            let bVerts = b.vertices.map(v => v.newSource(s, shift));
+            let aEdges = a.edges.map(v => v.newSource(s));
+            let bEdges = b.edges.map(v => v.newSource(s, shift));
 
             function pushorep<T>(rep: boolean, arr: T[], i: number, v: T) {
                 if (rep) arr[i] = v;
@@ -43,37 +57,37 @@ module geo {
             }
 
             function split(
-                index: number, vert: Vertex, verts: Vertex[],
-                // c, otherIndex, otherVertex, otherC, newPtIndex
-                inters: [number, number, Vertex, number, number][]
+                index: number, edge: Edge, edges: Edge[],
+                // c, otherIndex, otherEdge, otherC, newPtIndex
+                inters: [number, number, Edge, number, number][]
             ) {
                 let replace = true;
 
-                let ptA = vert.getPtA();
-                let lastIndex = vert.ptAIndex;
+                let ptA = edge.getPtA();
+                let lastIndex = edge.ptAIndex;
                 let alive: boolean = undefined;
                 inters
                 .sort((lhs, rhs) => lhs[0] - rhs[0])
                 .forEach(inter => {
-                    let oVert = inter[2];
+                    let oEdge = inter[2];
                     if (alive === undefined) {
-                        alive = !oVert.isInside(ptA);
+                        alive = !oEdge.isInside(ptA);
                         // If the first one is inside, then it's first pt is inside
                         // as well and must be killed (with fire)
-                        if (!alive) ptsFates[vert.ptAIndex] = Fate.DEAD;
+                        if (!alive) ptsFates[edge.ptAIndex] = Fate.DEAD;
                     }
 
                     let newPtIndex = inter[4];
                     let newPt: THREE.Vector2;
                     if (!newPtIndex) {
                         newPtIndex = inter[4] = s.points.length;
-                        s.points.push(newPt = vert.getInterpolated(inter[0]));
+                        s.points.push(newPt = edge.getInterpolated(inter[0]));
                     }
 
                     if (alive) {
-                        pushorep(replace, verts, index, new Vertex(s,
+                        pushorep(replace, edges, index, new Edge(s,
                             lastIndex, newPtIndex,
-                            vert.norm,     vert.normC
+                            edge.norm,     edge.normC
                         ));
                         ptsFates[lastIndex] = Fate.ALIVE;
                         ptsFates[newPtIndex] = Fate.ALIVE;
@@ -84,146 +98,117 @@ module geo {
                     alive = !alive;
                 });
                 if (alive) {
-                    pushorep(replace, verts, index, new Vertex(s,
-                        lastIndex, vert.ptBIndex,
-                        vert.norm, vert.normC
+                    pushorep(replace, edges, index, new Edge(s,
+                        lastIndex, edge.ptBIndex,
+                        edge.norm, edge.normC
                     ));
                     ptsFates[lastIndex] = Fate.ALIVE;
-                    ptsFates[vert.ptBIndex] = Fate.ALIVE;
+                    ptsFates[edge.ptBIndex] = Fate.ALIVE;
                 }
-                else if (alive === false) ptsFates[vert.ptBIndex] = Fate.DEAD;
+                else if (alive === false) ptsFates[edge.ptBIndex] = Fate.DEAD;
             };
 
-            function findFate(ptIndex: number, verts: Vertex[]): Fate {
-                let pt = s.points[ptIndex];
-                let closest: Vertex = null;
-                let closestInter: number = null;
-                verts.forEach(vert => {
-                    let inter = Vertex.getPtIntersection(vert, pt);
-                    if (!inter) return;
-                    inter = Math.abs(inter);
-                    if (closestInter === null || inter < closestInter) {
-                        closest = vert;
-                        closestInter = closestInter;
-                    }
-                });
-                return (closest === null || !closest.isInside(pt)) ?
-                    Fate.ALIVE : Fate.DEAD;
-            }
-            function handlePtFate(index: number, vert: Vertex, verts: Vertex[]) {
-                let fateA = ptsFates[vert.ptAIndex];
-                let fateB = ptsFates[vert.ptBIndex];
+            function handlePtFate(index: number, edge: Edge, edges: Edge[]) {
+                let fateA = ptsFates[edge.ptAIndex];
+                let fateB = ptsFates[edge.ptBIndex];
                 if (fateA === Fate.ALIVE && fateB === Fate.ALIVE) {
                     // live
                     return;
                 }
                 if (fateA === Fate.DEAD || fateB === Fate.DEAD) {
-                    if (fateA === undefined) ptsFates[vert.ptAIndex] = Fate.DEAD;
-                    if (fateB === undefined) ptsFates[vert.ptBIndex] = Fate.DEAD;
+                    if (fateA === undefined) ptsFates[edge.ptAIndex] = Fate.DEAD;
+                    if (fateB === undefined) ptsFates[edge.ptBIndex] = Fate.DEAD;
                     // die
                     return;
                 }
                 if (fateA === undefined)
-                    ptsFates[vert.ptAIndex] = findFate(vert.ptAIndex, verts);
+                    ptsFates[edge.ptAIndex] = Shape.isInside(edge.getPtA(), edges) ?
+                        Fate.DEAD : Fate.ALIVE;
                 if (fateB === undefined)
-                    ptsFates[vert.ptBIndex] = findFate(vert.ptBIndex, verts);
+                    ptsFates[edge.ptBIndex] = Shape.isInside(edge.getPtB(), edges) ?
+                        Fate.DEAD : Fate.ALIVE;
 
-                handlePtFate(index, vert, verts);
+                handlePtFate(index, edge, edges);
             }
 
-            // We can do the aVert splits sooner than the bSplits because we can
-            // fully know after having gone through the bVerts. For the bInters,
+            // We can do the aEdge splits sooner than the bSplits because we can
+            // fully know after having gone through the bEdges. For the bInters,
             // we must wait until we've gone through every pair
 
             let aNeeded: boolean, bNeeded: boolean;
             let ptA: THREE.Vector2, ptB: THREE.Vector2;
-            let closestToA: Vertex, closestToB: Vertex;
-            let closestInterToA: number, closestInterToB: number;
 
-            // bC aIndex aVert aC, newPtIndex, indexed by bVert index
-            let bInters: [number, number, Vertex, number, number][][] = [];
-            for (let i = aVerts.length; i--;) {
-                let aVert = aVerts[i];
-                // aC bIndex bVert bC newPtIndex
-                let inters: [number, number, Vertex, number, number][] = [];
+            // bC aIndex aEdge aC, newPtIndex, indexed by bEdge index
+            let bInters: [number, number, Edge, number, number][][] = [];
+            for (let i = aEdges.length; i--;) {
+                let aEdge = aEdges[i];
+                // aC bIndex bEdge bC newPtIndex
+                let inters: [number, number, Edge, number, number][] = [];
 
-                aNeeded = ptsFates[aVert.ptAIndex] === undefined;
-                bNeeded = ptsFates[aVert.ptBIndex] === undefined;
-                if (aNeeded) {
-                    closestToA = closestInterToA = null;
-                    ptA = aVert.getPtA();
-                }
-                if (bNeeded) {
-                    closestToB = closestInterToB = null;
-                    ptB = aVert.getPtB();
-                }
+                aNeeded = ptsFates[aEdge.ptAIndex] === undefined;
+                bNeeded = ptsFates[aEdge.ptBIndex] === undefined;
+                let smallerA = 0, smallerB = 0;
+                if (aNeeded) ptA = aEdge.getPtA();
+                if (bNeeded) ptB = aEdge.getPtB();
 
-                for (let j = bVerts.length; j--;) {
-                    let bVert = bVerts[j];
+                for (let j = bEdges.length; j--;) {
+                    let bEdge = bEdges[j];
                     // cA cB
-                    let inter = Vertex.getIntersection(aVert, bVert);
+                    let inter = Edge.getIntersection(aEdge, bEdge);
                     if (inter) {
-                        inters.push([inter[0], j, bVert, inter[1], undefined]);
+                        inters.push([inter[0], j, bEdge, inter[1], undefined]);
                         aNeeded = bNeeded = false;
                     }
 
                     a: if (aNeeded) {
-                        let inter = Vertex.getPtIntersection(bVert, ptA);
+                        let inter = Edge.getPtIntersection(bEdge, ptA, RAY);
                         if (inter === null) break a;
-                        inter = Math.abs(inter);
-                        if (closestInterToA === null || inter < closestInterToA) {
-                            closestInterToA = inter;
-                            closestToA = bVert;
-                        }
+                        if (inter < 0) smallerA++;
                     }
 
                     b: if (bNeeded) {
-                        let inter = Vertex.getPtIntersection(bVert, ptB);
+                        let inter = Edge.getPtIntersection(bEdge, ptB, RAY);
                         if (inter === null) break b;
-                        inter = Math.abs(inter);
-                        if (closestInterToB === null || inter < closestInterToB) {
-                            closestInterToB = inter;
-                            closestToB = bVert;
-                        }
+                        if (inter < 0) smallerB++;
                     }
                 }
-                split(i, aVert, aVerts, inters);
+                split(i, aEdge, aEdges, inters);
                 // Fate is either determined by it's intersections
                 if (inters.length) inters.forEach(inter => {
                     let arr = bInters[inter[1]];
                     if (!arr) bInters[inter[1]] = arr = [];
-                    arr.push([inter[3], i, aVert, inter[0], inter[4]]);
+                    arr.push([inter[3], i, aEdge, inter[0], inter[4]]);
                 });
                 else {
-                    if (aNeeded) ptsFates[aVert.ptAIndex] =
-                        (closestToA === null || !closestToA.isInside(ptA)) ?
+                    if (aNeeded) ptsFates[aEdge.ptAIndex] =
+                        (smallerA % 2 === 0) ?
                         Fate.ALIVE : Fate.DEAD;
 
-                    if (bNeeded) ptsFates[aVert.ptBIndex] =
-                        (closestToB === null || !closestToB.isInside(ptB)) ?
+                    if (bNeeded) ptsFates[aEdge.ptBIndex] =
+                        (smallerB % 2 === 0) ?
                         Fate.ALIVE : Fate.DEAD;
 
-                    handlePtFate(i, aVert, bVerts);
+                    handlePtFate(i, aEdge, bEdges);
                 }
             }
-            bVerts.forEach((bVert, i) => {
+            bEdges.forEach((bEdge, i) => {
                 let inters = bInters[i];
 
-                if (inters && inters.length) split(i, bVert, bVerts, inters);
-                else handlePtFate(i, bVert, aVerts);
+                if (inters && inters.length) split(i, bEdge, bEdges, inters);
+                else handlePtFate(i, bEdge, aEdges);
             });
 
-            s.vertices = aVerts.concat(bVerts);
+            s.edges = aEdges.concat(bEdges);
             for (let i = s.points.length; i--;) {
                 let fate = ptsFates[i];
                 if (fate !== Fate.DEAD) continue;
-                for (let j = s.vertices.length; j--;) {
-                    let vert = s.vertices[j];
-                    if (vert.ptAIndex === i || vert.ptBIndex === i) {
-                        s.vertices.splice(j, 1);
+                for (let j = s.edges.length; j--;) {
+                    let edge = s.edges[j];
+                    if (edge.ptAIndex === i || edge.ptBIndex === i) {
+                        s.edges.splice(j, 1);
                     } else {
-                        if (vert.ptAIndex > i) vert.ptAIndex--;
-                        if (vert.ptBIndex > i) vert.ptBIndex--;
+                        if (edge.ptAIndex > i) edge.ptAIndex--;
+                        if (edge.ptBIndex > i) edge.ptBIndex--;
                     }
                 }
                 s.points.splice(i, 1);
@@ -233,7 +218,7 @@ module geo {
         }
 
         points: THREE.Vector2[];
-        vertices: Vertex[];
+        edges: Edge[];
         size: THREE.Vector2;
 
         computeSize(): THREE.Vector2 {
@@ -271,6 +256,116 @@ module geo {
             this.points.forEach(pt => pt.sub(shift));
 
             return shift;
+        }
+
+        triangulate(): Triangle[] {
+            let pts = this.points;
+            let edges = this.edges.slice();
+            let trigs: Triangle[] = [];
+
+            let ptsEdgeRefs: number[][] = [];
+            let ptsTrigRefs: number[][] = Array.gen(ptI => [], pts.length);
+
+            for (let i = edges.length; i--;) {
+                let edge = edges[i];
+
+                let aEdgeRefs = ptsEdgeRefs[edge.ptAIndex];
+                if (!aEdgeRefs) aEdgeRefs = ptsEdgeRefs[edge.ptAIndex] = [];
+                aEdgeRefs[edge.ptBIndex] = i;
+
+                let bEdgeRefs = ptsEdgeRefs[edge.ptBIndex];
+                if (!bEdgeRefs) bEdgeRefs = ptsEdgeRefs[edge.ptBIndex] = [];
+                bEdgeRefs[edge.ptAIndex] = i;
+            }
+
+            let tmpEdge = new Edge(this,
+                null, null,
+                null, null,
+                new THREE.Vector2()
+            );
+            let tmpPt = new THREE.Vector2();
+            for (let ptI = pts.length; ptI--;) {
+                let pt = pts[ptI];
+                let edgeRefs = ptsEdgeRefs[ptI];
+                let trigRefs = ptsTrigRefs[ptI];
+
+                // Construct all the legal edges
+                tmpEdge.ptAIndex = ptI;
+                ptO: for (let ptOI = pts.length; ptOI--;) {
+                    // Ignore points already connected
+                    if (ptI === ptOI || edgeRefs[ptOI] !== undefined) continue ptO;
+                    let ptO = pts[ptOI];
+                    let oRefs = ptsEdgeRefs[ptOI];
+                    tmpEdge.ptBIndex = ptOI;
+                    tmpEdge.dir.copy(ptO).sub(pt);
+
+                    // Before anything determine if the connection is within the
+                    // shape
+                    tmpPt.set((pt.x + ptO.x) / 2, (pt.y + ptO.y) / 2);
+                    if (!Shape.isInside(tmpPt, this.edges)) continue ptO;
+
+                    // Determine if the edge is valid
+                    edge: for (let edgeI = edges.length; edgeI--;) {
+                        let edge = edges[edgeI];
+                        if (edge.ptAIndex === ptI ||
+                            edge.ptAIndex === ptOI ||
+                            edge.ptBIndex === ptI ||
+                            edge.ptBIndex === ptOI
+                        ) continue edge;
+                        let inter = Edge.getIntersection(tmpEdge, edge);
+                        if (inter !== null) continue ptO;
+                    }
+
+                    // The edge was valid; update edgeRefs and add it to edges
+                    edgeRefs[ptOI] = oRefs[ptI] = edges.length;
+                    edges.push(new Edge(this, ptI, ptOI, null, null));
+                }
+
+                let orderedPtsRefs: number[] = [];
+                let ptsAngles: number[] = [];
+                for (let ptOIKey in edgeRefs) {
+                    let ptOI = parseInt(ptOIKey);
+                    if (isNaN(ptOI)) continue;
+                    let edge = edges[edgeRefs[ptOI]];
+                    let ptO = edge.ptAIndex === ptI ? edge.getPtB() : edge.getPtA();
+                    let angle = Math.atan2(ptO.y - pt.y, ptO.x - pt.x);
+                    orderedPtsRefs.push(ptOI);
+                    ptsAngles[ptOI] = angle;
+                }
+                orderedPtsRefs = orderedPtsRefs.sort((lhsI, rhsI) =>
+                    ptsAngles[lhsI] - ptsAngles[rhsI]);
+
+                trig: for (let refI = 0; refI < orderedPtsRefs.length; refI++) {
+                    let ptAI = orderedPtsRefs[refI];
+                    let ptBI = orderedPtsRefs[(refI + 1) % orderedPtsRefs.length];
+                    let edgeAB = edges[ptsEdgeRefs[ptAI][ptBI]];
+                    if (!edgeAB) continue trig;
+
+                    for (let trigRefI = trigRefs.length; trigRefI--;) {
+                        let trig = trigs[trigRefs[trigRefI]];
+                        if ((
+                            trig.ptAIndex === ptI ||
+                            trig.ptBIndex === ptI ||
+                            trig.ptCIndex === ptI
+                        ) && (
+                            trig.ptAIndex === ptAI ||
+                            trig.ptBIndex === ptAI ||
+                            trig.ptCIndex === ptAI
+                        ) && (
+                            trig.ptAIndex === ptBI ||
+                            trig.ptBIndex === ptBI ||
+                            trig.ptCIndex === ptBI
+                        )) continue trig;
+                    }
+                    let trig = new Triangle(this, ptI, ptAI, ptBI);
+                    trigRefs.push(trigs.length);
+                    ptsTrigRefs[ptAI].push(trigs.length);
+                    ptsTrigRefs[ptBI].push(trigs.length);
+                    trigs.push(trig);
+                }
+            }
+
+            return trigs;
         }
     }
 }

@@ -108,6 +108,10 @@ Math.bound = function(n, mn, mx) {
 Math.HALF_PI = Math.PI / 2;
 Math.TAU = Math.PI * 2;
 
+interface NumberConstructor {
+    isFinite(num: any): boolean;
+}
+
 // Note that unprefixing elements that aren't initially defined will break them
 // (which is why it conditionnally unprefixes pointerLockElement)
 // ps: this assumes that if requestPointerLock is defined, then so is

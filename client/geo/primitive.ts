@@ -6,59 +6,66 @@ module geo {
         points: THREE.Vector2[];
     }
 
-    export class Vertex {
 
-        static getIntersection(a: Vertex, b: Vertex): [number, number] {
-            // Let a_1, a_2, b_1, b_2 e |R^2 and c_1, c_2 e |R
-            // If we have the lines c_1 * a_1 + b_1 and c_2 * a_2 + b_2
-            // Such that they define the vertices a and b
-            // with a_1 = [a_11, a_12], a_2 = [a_21, a_22]
-            // Then we are wondering about the linear equation
-            // c_1 * a_1 + b_1 = c_2 * a_2 + b_2 with the 'a's and 'b's known
-            // then, let
-            // A = [a_1 a_2]
-            // c = [c_1, c_2], b = [b_1 b_2]
-            // and we can write
-            // Ac = b <=> c = A^-1 * b
-            // with A^-1 = 1/|A| * adj(A)
-            // we also have that if |A| = 0, then the lines are parallel
-            // Finally, we must also consider the cases where
-            // c_1 and c_2 lie outside the vertices
-            // Nicely, because we do (end - start) for finding the directions
-            // then if c_1 or c_2 lie outside of [0, 1]
-            // TODO: Before we actually start computing things left and right, we can do a simple AABB check to limit the calculations
-            var startA = a.getPtA();
-            var startB = b.getPtA();
-            var dirA = a.getDir(), dirB = b.getDir();
+    function getIntersection(
+        ptA: THREE.Vector2, dirA: THREE.Vector2,
+        ptB: THREE.Vector2, dirB: THREE.Vector2
+    ): [number, number] {
+        // Let a_1, a_2, b_1, b_2 e |R^2 and c_1, c_2 e |R
+        // If we have the lines c_1 * a_1 + b_1 and c_2 * a_2 + b_2
+        // Such that they define the edges a and b
+        // with a_1 = [a_11, a_12], a_2 = [a_21, a_22]
+        // Then we are wondering about the linear equation
+        // c_1 * a_1 + b_1 = c_2 * a_2 + b_2 with the 'a's and 'b's known
+        // then, let
+        // A = [a_1 a_2]
+        // c = [c_1, c_2], b = [b_1 b_2]
+        // and we can write
+        // Ac = b <=> c = A^-1 * b
+        // with A^-1 = 1/|A| * adj(A)
 
-            var det = - (dirA.x * dirB.y) + (dirB.x * dirA.y);
-            if (det === 0) return null;
+        let det = - (dirA.x * dirB.y) + (dirB.x * dirA.y);
 
-            var invDet = 1 / det;
-            var diffX = startB.x - startA.x, diffY = startB.y - startA.y;
+        if (Math.abs(det) < DELTA) return undefined;
 
-            var cA = invDet * (- dirB.y * diffX + dirB.x * diffY);
-            if (cA < 0 || cA > 1) return null;
+        let invDet = 1 / det;
+        let diffX = ptB.x - ptA.x, diffY = ptB.y - ptA.y;
 
-            var cB = invDet * (- dirA.y * diffX + dirA.x * diffY);
-            if (cB < 0 || cB > 1) return null;
+        let cA = invDet * (- dirB.y * diffX + dirB.x * diffY);
+        let cB = invDet * (- dirA.y * diffX + dirA.x * diffY);
 
-            return [cA, cB];
+        return [cA, cB];
+    }
+
+    export const DELTA = 0.0001;
+    export class Edge {
+
+        static getIntersection(a: Edge, b: Edge): [number, number] {
+            let startA = a.getPtA(), endA = a.getPtB();
+            let startB = b.getPtA(), endB = b.getPtB();
+
+            if (Math.min(startA.x, endA.x) - Math.max(startB.x, endB.x) > DELTA ||
+                Math.min(startB.x, endB.x) - Math.max(startA.x, endA.x) > DELTA ||
+                Math.min(startA.y, endA.y) - Math.max(startB.y, endB.y) > DELTA ||
+                Math.min(startB.y, endB.y) - Math.max(startA.y, endA.y) > DELTA
+            ) return null;
+
+            let inter = getIntersection(startA, a.getDir(), startB, b.getDir());
+            if (!inter) return inter;
+            if (inter[0] < -DELTA || inter[0] > 1 + DELTA) return null;
+            if (inter[1] < -DELTA || inter[1] > 1 + DELTA) return null;
+            return inter;
         }
-        static getPtIntersection(v: Vertex, p: THREE.Vector2): number {
-            var start = v.getPtA();
-            var dir = v.getDir();
+        static getPtIntersection(
+            v: Edge, p: THREE.Vector2, ray: THREE.Vector2
+        ): number {
+            let start = v.getPtA();
+            let dir = v.getDir();
 
-            // Naturally, if it's parallel to our line of doom, then it's doomed
-            if (dir.y === 0) return null;
-
-            var diffX = p.x - start.x, diffY = p.y - start.y;
-
-            var cV = diffY / dir.y;
-            if (cV < 0 || cV > 1) return null;
-
-            var c = (- dir.y * diffX + dir.x * diffY) / dir.y;
-            return c;
+            let inter = getIntersection(start, dir, p, ray);
+            if (!inter) return undefined;
+            if (inter[0] < -DELTA || inter[0] > 1 + DELTA) return null;
+            return inter[1];
         }
 
         constructor(
@@ -97,12 +104,21 @@ module geo {
             return this.dir ||
                 (this.dir = this.getPtB().clone().sub(this.getPtA()));
         }
-        isInside(pt: THREE.Vector2) {
-            return this.norm.dot(pt) > this.normC;
+        isInside(pt: THREE.Vector2): boolean {
+            return this.norm.dot(pt) - this.normC > -DELTA;
         }
-        newSource(ptSource: PtSource, shift?: number): Vertex {
+        distance(pt: THREE.Vector2): number {
+            let inter = getIntersection(
+                pt, this.norm,
+                this.getPtA(), this.getDir()
+            );
+            if (inter[1] < 0) return this.getPtA().clone().distanceToSquared(pt);
+            if (inter[1] > 1) return this.getPtB().clone().distanceToSquared(pt);
+            return inter[0] * inter[0];
+        }
+        newSource(ptSource: PtSource, shift?: number): Edge {
             shift = shift || 0;
-            return new Vertex(
+            return new Edge(
                 ptSource,
                 this.ptAIndex + shift,
                 this.ptBIndex + shift,
@@ -115,12 +131,13 @@ module geo {
 
     export class Triangle {
 
-        construtor(
+        constructor(
             ptSource: PtSource,
             ptAIndex: number,
             ptBIndex: number,
             ptCIndex: number
         ) {
+            this.ptSource = ptSource;
             this.ptAIndex = ptAIndex;
             this.ptBIndex = ptBIndex;
             this.ptCIndex = ptCIndex;
@@ -130,5 +147,15 @@ module geo {
         ptAIndex: number;
         ptBIndex: number;
         ptCIndex: number;
+
+        getPtA(): THREE.Vector2 {
+            return this.ptSource.points[this.ptAIndex];
+        }
+        getPtB(): THREE.Vector2 {
+            return this.ptSource.points[this.ptBIndex];
+        }
+        getPtC(): THREE.Vector2 {
+            return this.ptSource.points[this.ptCIndex];
+        }
     }
 }

@@ -11,7 +11,6 @@
 
 /* Scene */
 var scene = new THREE.Scene();
-scene.add(new THREE.AmbientLight(0x111111));
 
 /* Camera */
 var camera = new THREE.PerspectiveCamera(
@@ -20,8 +19,8 @@ var camera = new THREE.PerspectiveCamera(
     0.1, // near
     1000 // far
 );
-camera.position.set(0, 0.5, 0);
-var camLight = new THREE.PointLight(0xffffff, 1, 3, 3);
+camera.position.set(0.5, 0.5, 0.5);
+var camLight = new THREE.PointLight(0xffffff, 1, 5, 5);
 
 /* textures */
 var loader = new THREE.TextureLoader();
@@ -82,25 +81,9 @@ effect.renderToScreen = true;
 composer.addPass(effect);
 
 /* Geo render */
-//var geoRender = new geo.CanvasRenderer();
+var geoRender = new geo.CanvasRenderer();
 //document.body.appendChild(geoRender.canvas);
 var shape = geo.Shape.union(
-    geo.Shape.fromDefinitions(
-        [
-            new THREE.Vector2(0, 1),
-            new THREE.Vector2(10, 1),
-            new THREE.Vector2(0, 10),
-            new THREE.Vector2(5, 5),
-            new THREE.Vector2(2.5, 5)
-        ],
-        [
-            [0, 1, false],
-            [0, 2, true],
-            [1, 3, false],
-            [3, 4, false],
-            [4, 2, false]
-        ]
-    ),
     geo.Shape.fromDefinitions(
         [
             new THREE.Vector2(2.5, 2.5),
@@ -120,11 +103,29 @@ var shape = geo.Shape.union(
             [1, 2, true],
             [2, 5, true],
         ]
+    ),
+    geo.Shape.fromDefinitions(
+        [
+            new THREE.Vector2(0, 1),
+            new THREE.Vector2(10, 1),
+            new THREE.Vector2(0, 10),
+            new THREE.Vector2(5, 5),
+            new THREE.Vector2(2.5, 5)
+        ],
+        [
+            [0, 1, false],
+            [0, 2, true],
+            [1, 3, false],
+            [3, 4, false],
+            [4, 2, false]
+        ]
     )
 );
-shape.recenter();
+let geoShift = shape.recenter();
+let now = performance.now();
+let trigs = shape.triangulate();
 scene.add(new THREE.Mesh(
-    dungeon.render(shape),
+    dungeon.render(shape, trigs),
     new THREE.MultiMaterial([brickMaterial, mortarMaterial])
 ));
 
@@ -142,8 +143,8 @@ window.onresize = event => {
     renderer.setSize(x, y, false);
     composer.setSize(x, y);
 
-    //geoRender.updateSize();
-    //geoRender.render(shape);
+    geoRender.updateSize();
+    geoRender.render(shape, geoShift, trigs);
 };
 window.onresize(null);
 
