@@ -952,29 +952,30 @@ var dungeon;
             geometry.faces.push(new THREE.Face3(edge.ptBIndex + normalShift, edge.ptAIndex + normalShift, edge.ptAIndex + inverseShift, new THREE.Vector3(edge.norm.x, 0, edge.norm.y)), new THREE.Face3(edge.ptBIndex + normalShift, edge.ptAIndex + inverseShift, edge.ptBIndex + inverseShift, new THREE.Vector3(edge.norm.x, 0, edge.norm.y)));
             var width = edge.getDir().length();
             var xScalar = 2 * width;
-            xScalar = Math.max(xScalar - xScalar % 0.5, 1);
+            xScalar = (inverseOrder ? -1 : 1) * Math.max(xScalar - xScalar % 0.5, 1);
             var xShift = 0.25;
             var height = 1;
-            var yScalar = 2;
+            var yShift = inverseOrder ? 2 : 0;
+            var yScalar = inverseOrder ? -2 : 2;
             geometry.faceVertexUvs[0].push([
-                new THREE.Vector2(xShift + xScalar, yScalar),
-                new THREE.Vector2(xShift, yScalar),
-                new THREE.Vector2(xShift, 0.0)
+                new THREE.Vector2(xShift + xScalar, yShift + yScalar),
+                new THREE.Vector2(xShift, yShift + yScalar),
+                new THREE.Vector2(xShift, yShift)
             ], [
-                new THREE.Vector2(xShift + xScalar, yScalar),
-                new THREE.Vector2(xShift, 0.0),
-                new THREE.Vector2(xShift + xScalar, 0.0)
+                new THREE.Vector2(xShift + xScalar, yShift + yScalar),
+                new THREE.Vector2(xShift, yShift),
+                new THREE.Vector2(xShift + xScalar, yShift)
             ]);
         });
         trigs.forEach(function (trig) {
-            geometry.faces.push(new THREE.Face3(trig.ptCIndex, trig.ptBIndex, trig.ptAIndex, new THREE.Vector3(0, 1, 0), null, 1), new THREE.Face3(trig.ptAIndex + shift, trig.ptBIndex + shift, trig.ptCIndex + shift, new THREE.Vector3(0, -1, 0), null, 1));
+            geometry.faces.push(new THREE.Face3(trig.ptCIndex, trig.ptBIndex, trig.ptAIndex, new THREE.Vector3(0, 1, 0), null, 0), new THREE.Face3(trig.ptAIndex + shift, trig.ptBIndex + shift, trig.ptCIndex + shift, new THREE.Vector3(0, -1, 0), null, 0));
             var ptA = trig.getPtA();
             var ptB = trig.getPtB();
             var ptC = trig.getPtC();
             geometry.faceVertexUvs[0].push([
-                new THREE.Vector2(2 * ptC.x, 2 * -ptC.y),
-                new THREE.Vector2(2 * ptB.x, 2 * -ptB.y),
-                new THREE.Vector2(2 * ptA.x, 2 * -ptA.y)
+                new THREE.Vector2(-2 * ptC.x, 2 * ptC.y),
+                new THREE.Vector2(-2 * ptB.x, 2 * ptB.y),
+                new THREE.Vector2(-2 * ptA.x, 2 * ptA.y)
             ], [
                 new THREE.Vector2(2 * ptA.x, 2 * ptA.y),
                 new THREE.Vector2(2 * ptB.x, 2 * ptB.y),
