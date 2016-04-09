@@ -6,7 +6,6 @@ module geo {
         points: THREE.Vector2[];
     }
 
-
     function getIntersection(
         ptA: THREE.Vector2, dirA: THREE.Vector2,
         ptB: THREE.Vector2, dirB: THREE.Vector2
@@ -37,35 +36,50 @@ module geo {
         return [cA, cB];
     }
 
+    export function getEdgeIntersection(a: Edge, b: Edge): [number, number] {
+        let startA = a.getPtA(), endA = a.getPtB();
+        let startB = b.getPtA(), endB = b.getPtB();
+
+        if (Math.min(startA.x, endA.x) - Math.max(startB.x, endB.x) > DELTA ||
+            Math.min(startB.x, endB.x) - Math.max(startA.x, endA.x) > DELTA ||
+            Math.min(startA.y, endA.y) - Math.max(startB.y, endB.y) > DELTA ||
+            Math.min(startB.y, endB.y) - Math.max(startA.y, endA.y) > DELTA
+        ) return null;
+
+        let inter = getIntersection(startA, a.getDir(), startB, b.getDir());
+        if (!inter) return inter;
+        if (inter[0] < -DELTA || inter[0] > 1 + DELTA) return null;
+        if (inter[1] < -DELTA || inter[1] > 1 + DELTA) return null;
+        return inter;
+    }
+    export function getPtIntersection(
+        v: Edge, p: THREE.Vector2, ray: THREE.Vector2
+    ): number {
+        let start = v.getPtA();
+        let dir = v.getDir();
+
+        let inter = getIntersection(start, dir, p, ray);
+        if (!inter) return undefined;
+        if (inter[0] < -DELTA || inter[0] > 1 + DELTA) return null;
+        return inter[1];
+    }
+
     export const DELTA = 0.0001;
+    const INTERNAL_TMP = new THREE.Vector2();
     export class Edge {
 
-        static getIntersection(a: Edge, b: Edge): [number, number] {
-            let startA = a.getPtA(), endA = a.getPtB();
-            let startB = b.getPtA(), endB = b.getPtB();
-
-            if (Math.min(startA.x, endA.x) - Math.max(startB.x, endB.x) > DELTA ||
-                Math.min(startB.x, endB.x) - Math.max(startA.x, endA.x) > DELTA ||
-                Math.min(startA.y, endA.y) - Math.max(startB.y, endB.y) > DELTA ||
-                Math.min(startB.y, endB.y) - Math.max(startA.y, endA.y) > DELTA
-            ) return null;
-
-            let inter = getIntersection(startA, a.getDir(), startB, b.getDir());
-            if (!inter) return inter;
-            if (inter[0] < -DELTA || inter[0] > 1 + DELTA) return null;
-            if (inter[1] < -DELTA || inter[1] > 1 + DELTA) return null;
-            return inter;
-        }
-        static getPtIntersection(
-            v: Edge, p: THREE.Vector2, ray: THREE.Vector2
-        ): number {
-            let start = v.getPtA();
-            let dir = v.getDir();
-
-            let inter = getIntersection(start, dir, p, ray);
-            if (!inter) return undefined;
-            if (inter[0] < -DELTA || inter[0] > 1 + DELTA) return null;
-            return inter[1];
+        static fromDefinition(
+            ptSource: PtSource,
+            // ptAIndex, ptBIndex, inverseNorm
+            def: [number, number, boolean]
+        ): Edge {
+            let ptA = ptSource.points[def[0]];
+            let ptB = ptSource.points[def[1]];
+            var norm = ptB.clone().sub(ptA);
+            norm.set(-norm.y, norm.x);
+            norm.setLength(1);
+            if (def[2]) norm.multiplyScalar(-1);
+            return new Edge(ptSource, def[0], def[1], norm);
         }
 
         constructor(
@@ -73,14 +87,12 @@ module geo {
             ptAIndex: number,
             ptBIndex: number,
             norm: THREE.Vector2,
-            normC: number,
             dir?: THREE.Vector2
         ) {
             this.ptSource = ptSource;
             this.ptAIndex = ptAIndex;
             this.ptBIndex = ptBIndex;
             this.norm = norm;
-            this.normC = normC;
             this.dir = dir;
         }
 
@@ -88,7 +100,6 @@ module geo {
         ptAIndex: number;
         ptBIndex: number;
         norm: THREE.Vector2;
-        normC: number;
         dir: THREE.Vector2;
 
         getPtA(): THREE.Vector2 {
@@ -105,7 +116,7 @@ module geo {
                 (this.dir = this.getPtB().clone().sub(this.getPtA()));
         }
         isInside(pt: THREE.Vector2): boolean {
-            return this.norm.dot(pt) - this.normC > -DELTA;
+            return this.norm.dot(INTERNAL_TMP.copy(pt).sub(this.getPtA())) > 0;
         }
         distance(pt: THREE.Vector2): number {
             let inter = getIntersection(
@@ -123,7 +134,6 @@ module geo {
                 this.ptAIndex + shift,
                 this.ptBIndex + shift,
                 this.norm,
-                this.normC,
                 this.dir
             );
         }

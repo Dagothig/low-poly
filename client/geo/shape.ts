@@ -16,16 +16,7 @@ module geo {
         ): Shape {
             var shape = new Shape();
             shape.points = points;
-            shape.edges = edges.map(def => {
-                let ptA = shape.points[def[0]];
-                let ptB = shape.points[def[1]];
-                var norm = ptB.clone().sub(ptA);
-                norm.set(-norm.y, norm.x);
-                norm.setLength(1);
-                if (def[2]) norm.multiplyScalar(-1);
-                var normC = norm.x ? (ptA.x * norm.x) : (ptB.y * norm.y);
-                return new Edge(shape, def[0], def[1], norm, normC);
-            });
+            shape.edges = edges.map(def => Edge.fromDefinition(shape, def));
             shape.computeSize();
             return shape;
         }
@@ -35,7 +26,7 @@ module geo {
             let bigger = 0;
             for (let i = edges.length; i--;) {
                 let edge = edges[i];
-                let inter = Edge.getPtIntersection(edge, pt, RAY);
+                let inter = getPtIntersection(edge, pt, RAY);
                 if (inter === null) continue;
                 if (inter < 0) smaller++;
                 if (inter > 0) bigger++;
@@ -86,8 +77,7 @@ module geo {
 
                     if (alive) {
                         pushorep(replace, edges, index, new Edge(s,
-                            lastIndex, newPtIndex,
-                            edge.norm,     edge.normC
+                            lastIndex, newPtIndex, edge.norm
                         ));
                         ptsFates[lastIndex] = Fate.ALIVE;
                         ptsFates[newPtIndex] = Fate.ALIVE;
@@ -99,8 +89,7 @@ module geo {
                 });
                 if (alive) {
                     pushorep(replace, edges, index, new Edge(s,
-                        lastIndex, edge.ptBIndex,
-                        edge.norm, edge.normC
+                        lastIndex, edge.ptBIndex, edge.norm
                     ));
                     ptsFates[lastIndex] = Fate.ALIVE;
                     ptsFates[edge.ptBIndex] = Fate.ALIVE;
@@ -154,20 +143,20 @@ module geo {
                 for (let j = bEdges.length; j--;) {
                     let bEdge = bEdges[j];
                     // cA cB
-                    let inter = Edge.getIntersection(aEdge, bEdge);
+                    let inter = getEdgeIntersection(aEdge, bEdge);
                     if (inter) {
                         inters.push([inter[0], j, bEdge, inter[1], undefined]);
                         aNeeded = bNeeded = false;
                     }
 
                     a: if (aNeeded) {
-                        let inter = Edge.getPtIntersection(bEdge, ptA, RAY);
+                        let inter = getPtIntersection(bEdge, ptA, RAY);
                         if (inter === null) break a;
                         if (inter < 0) smallerA++;
                     }
 
                     b: if (bNeeded) {
-                        let inter = Edge.getPtIntersection(bEdge, ptB, RAY);
+                        let inter = getPtIntersection(bEdge, ptB, RAY);
                         if (inter === null) break b;
                         if (inter < 0) smallerB++;
                     }
@@ -278,11 +267,7 @@ module geo {
                 bEdgeRefs[edge.ptAIndex] = i;
             }
 
-            let tmpEdge = new Edge(this,
-                null, null,
-                null, null,
-                new THREE.Vector2()
-            );
+            let tmpEdge = new Edge(this, null, null, null, new THREE.Vector2());
             let tmpPt = new THREE.Vector2();
             for (let ptI = pts.length; ptI--;) {
                 let pt = pts[ptI];
@@ -312,7 +297,7 @@ module geo {
                             edge.ptBIndex === ptI ||
                             edge.ptBIndex === ptOI
                         ) continue edge;
-                        let inter = Edge.getIntersection(tmpEdge, edge);
+                        let inter = getEdgeIntersection(tmpEdge, edge);
                         if (inter !== null) continue ptO;
                     }
 
@@ -340,6 +325,15 @@ module geo {
                     let ptBI = orderedPtsRefs[(refI + 1) % orderedPtsRefs.length];
                     let edgeAB = edges[ptsEdgeRefs[ptAI][ptBI]];
                     if (!edgeAB) continue trig;
+
+                    tmpPt.copy(pts[ptAI]).add(pts[ptBI]).add(pt).divideScalar(3);
+                    if (edgeAB.norm && !edgeAB.isInside(tmpPt)) continue trig;
+
+                    let edgeA = edges[edgeRefs[ptAI]];
+                    if (edgeA.norm && !edgeA.isInside(tmpPt)) continue trig;
+
+                    let edgeB = edges[edgeRefs[ptBI]];
+                    if (edgeB.norm && !edgeB.isInside(tmpPt)) continue trig;
 
                     for (let trigRefI = trigRefs.length; trigRefI--;) {
                         let trig = trigs[trigRefs[trigRefI]];

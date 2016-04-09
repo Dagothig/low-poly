@@ -83,6 +83,7 @@ composer.addPass(effect);
 /* Geo render */
 var geoRender = new geo.CanvasRenderer();
 //document.body.appendChild(geoRender.canvas);
+var naw = performance.now();
 var shape = geo.Shape.union(
     geo.Shape.fromDefinitions(
         [
@@ -122,8 +123,8 @@ var shape = geo.Shape.union(
     )
 );
 let geoShift = shape.recenter();
-let now = performance.now();
 let trigs = shape.triangulate();
+console.log(performance.now() - naw);
 scene.add(new THREE.Mesh(
     dungeon.render(shape, trigs),
     new THREE.MultiMaterial([brickMaterial, mortarMaterial])
@@ -144,7 +145,6 @@ window.onresize = event => {
     composer.setSize(x, y);
 
     geoRender.updateSize();
-    geoRender.render(shape, geoShift, trigs);
 };
 window.onresize(null);
 
@@ -176,6 +176,12 @@ function render() {
         camera.position.add(dir);
         camera.setRotationFromEuler(camControl.euler);
         camLight.position.copy(camera.position);
+
+        /*geoRender.render(shape, geoShift, trigs,
+            (controls && controls.state) ?
+                new THREE.Vector2(controls.state.mouseX, controls.state.mouseY) :
+                undefined
+        );*/
     });
 
     composer.render();

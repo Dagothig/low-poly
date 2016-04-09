@@ -16,7 +16,10 @@ module geo {
             this.canvas.width = this.canvas.offsetWidth;
             this.canvas.height = this.canvas.offsetHeight;
         }
-        render(shape: Shape, shift: THREE.Vector2, trigs?: Triangle[]) {
+        render(
+            shape: Shape, shift: THREE.Vector2,
+            trigs?: Triangle[], mouse?: THREE.Vector2
+        ) {
             var pad = 16;
 
             this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -31,6 +34,8 @@ module geo {
                 this.canvas.height - pad * 2
             ).divide(shape.size.clone());
             let start = new THREE.Vector2(), end = new THREE.Vector2();
+            if (mouse)
+                mouse.sub(start.set(pad, pad)).divide(ratio).sub(shift);
             let ptA = new THREE.Vector2();
             let ptB = new THREE.Vector2();
             let ptC = new THREE.Vector2();
@@ -51,19 +56,24 @@ module geo {
                 start.copy(edge.getPtA()).add(shift);
                 end.copy(edge.getPtB()).add(shift);
 
-                this.context.strokeStyle = 'rgba(0, 0, 255, 0.5)';
-                this.context.beginPath();
-                this.context.moveTo(
-                    pad + (start.x + end.x) / 2 * ratio.x,
-                    pad + (start.y + end.y) / 2 * ratio.y
-                );
-                if (edge.norm) this.context.lineTo(
-                    pad + ((start.x + end.x) / 2 + edge.norm.x) * ratio.x,
-                    pad + ((start.y + end.y) / 2 + edge.norm.y) * ratio.y
-                );
-                this.context.stroke();
+                if (edge.norm) {
+                    this.context.strokeStyle = 'rgba(0, 0, 255, 0.5)';
+                    this.context.beginPath();
+                    this.context.moveTo(
+                        pad + (start.x + end.x) / 2 * ratio.x,
+                        pad + (start.y + end.y) / 2 * ratio.y
+                    );
+                    this.context.lineTo(
+                        pad + ((start.x + end.x) / 2 + edge.norm.x) * ratio.x,
+                        pad + ((start.y + end.y) / 2 + edge.norm.y) * ratio.y
+                    );
+                    this.context.stroke();
+                }
 
-                this.context.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+                if (mouse && edge.isInside(mouse))
+                    this.context.strokeStyle = 'rgba(255, 0, 255, 0.5)';
+                else
+                    this.context.strokeStyle = 'rgba(255, 0, 0, 0.5)';
                 this.context.beginPath();
                 this.context.moveTo(
                     pad + start.x * ratio.x,

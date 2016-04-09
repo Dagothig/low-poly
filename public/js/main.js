@@ -133,7 +133,6 @@ function unprefix(element, prop, prefixes) {
             },
             set: function (val) {
                 var _this = this;
-                console.log(val);
                 props.forEach(function (prop) { return _this[prop] = val; });
             }
         });
@@ -235,42 +234,56 @@ var geo;
         var cB = invDet * (-dirA.y * diffX + dirA.x * diffY);
         return [cA, cB];
     }
+    function getEdgeIntersection(a, b) {
+        var startA = a.getPtA(), endA = a.getPtB();
+        var startB = b.getPtA(), endB = b.getPtB();
+        if (Math.min(startA.x, endA.x) - Math.max(startB.x, endB.x) > geo.DELTA ||
+            Math.min(startB.x, endB.x) - Math.max(startA.x, endA.x) > geo.DELTA ||
+            Math.min(startA.y, endA.y) - Math.max(startB.y, endB.y) > geo.DELTA ||
+            Math.min(startB.y, endB.y) - Math.max(startA.y, endA.y) > geo.DELTA)
+            return null;
+        var inter = getIntersection(startA, a.getDir(), startB, b.getDir());
+        if (!inter)
+            return inter;
+        if (inter[0] < -geo.DELTA || inter[0] > 1 + geo.DELTA)
+            return null;
+        if (inter[1] < -geo.DELTA || inter[1] > 1 + geo.DELTA)
+            return null;
+        return inter;
+    }
+    geo.getEdgeIntersection = getEdgeIntersection;
+    function getPtIntersection(v, p, ray) {
+        var start = v.getPtA();
+        var dir = v.getDir();
+        var inter = getIntersection(start, dir, p, ray);
+        if (!inter)
+            return undefined;
+        if (inter[0] < -geo.DELTA || inter[0] > 1 + geo.DELTA)
+            return null;
+        return inter[1];
+    }
+    geo.getPtIntersection = getPtIntersection;
     geo.DELTA = 0.0001;
+    var INTERNAL_TMP = new THREE.Vector2();
     var Edge = (function () {
-        function Edge(ptSource, ptAIndex, ptBIndex, norm, normC, dir) {
+        function Edge(ptSource, ptAIndex, ptBIndex, norm, dir) {
             this.ptSource = ptSource;
             this.ptAIndex = ptAIndex;
             this.ptBIndex = ptBIndex;
             this.norm = norm;
-            this.normC = normC;
             this.dir = dir;
         }
-        Edge.getIntersection = function (a, b) {
-            var startA = a.getPtA(), endA = a.getPtB();
-            var startB = b.getPtA(), endB = b.getPtB();
-            if (Math.min(startA.x, endA.x) - Math.max(startB.x, endB.x) > geo.DELTA ||
-                Math.min(startB.x, endB.x) - Math.max(startA.x, endA.x) > geo.DELTA ||
-                Math.min(startA.y, endA.y) - Math.max(startB.y, endB.y) > geo.DELTA ||
-                Math.min(startB.y, endB.y) - Math.max(startA.y, endA.y) > geo.DELTA)
-                return null;
-            var inter = getIntersection(startA, a.getDir(), startB, b.getDir());
-            if (!inter)
-                return inter;
-            if (inter[0] < -geo.DELTA || inter[0] > 1 + geo.DELTA)
-                return null;
-            if (inter[1] < -geo.DELTA || inter[1] > 1 + geo.DELTA)
-                return null;
-            return inter;
-        };
-        Edge.getPtIntersection = function (v, p, ray) {
-            var start = v.getPtA();
-            var dir = v.getDir();
-            var inter = getIntersection(start, dir, p, ray);
-            if (!inter)
-                return undefined;
-            if (inter[0] < -geo.DELTA || inter[0] > 1 + geo.DELTA)
-                return null;
-            return inter[1];
+        Edge.fromDefinition = function (ptSource, 
+            // ptAIndex, ptBIndex, inverseNorm
+            def) {
+            var ptA = ptSource.points[def[0]];
+            var ptB = ptSource.points[def[1]];
+            var norm = ptB.clone().sub(ptA);
+            norm.set(-norm.y, norm.x);
+            norm.setLength(1);
+            if (def[2])
+                norm.multiplyScalar(-1);
+            return new Edge(ptSource, def[0], def[1], norm);
         };
         Edge.prototype.getPtA = function () {
             return this.ptSource.points[this.ptAIndex];
@@ -286,7 +299,7 @@ var geo;
                 (this.dir = this.getPtB().clone().sub(this.getPtA()));
         };
         Edge.prototype.isInside = function (pt) {
-            return this.norm.dot(pt) - this.normC > -geo.DELTA;
+            return this.norm.dot(INTERNAL_TMP.copy(pt).sub(this.getPtA())) > 0;
         };
         Edge.prototype.distance = function (pt) {
             var inter = getIntersection(pt, this.norm, this.getPtA(), this.getDir());
@@ -298,7 +311,7 @@ var geo;
         };
         Edge.prototype.newSource = function (ptSource, shift) {
             shift = shift || 0;
-            return new Edge(ptSource, this.ptAIndex + shift, this.ptBIndex + shift, this.norm, this.normC, this.dir);
+            return new Edge(ptSource, this.ptAIndex + shift, this.ptBIndex + shift, this.norm, this.dir);
         };
         return Edge;
     }());
@@ -340,17 +353,7 @@ var geo;
         Shape.fromDefinitions = function (points, edges) {
             var shape = new Shape();
             shape.points = points;
-            shape.edges = edges.map(function (def) {
-                var ptA = shape.points[def[0]];
-                var ptB = shape.points[def[1]];
-                var norm = ptB.clone().sub(ptA);
-                norm.set(-norm.y, norm.x);
-                norm.setLength(1);
-                if (def[2])
-                    norm.multiplyScalar(-1);
-                var normC = norm.x ? (ptA.x * norm.x) : (ptB.y * norm.y);
-                return new geo.Edge(shape, def[0], def[1], norm, normC);
-            });
+            shape.edges = edges.map(function (def) { return geo.Edge.fromDefinition(shape, def); });
             shape.computeSize();
             return shape;
         };
@@ -359,7 +362,7 @@ var geo;
             var bigger = 0;
             for (var i = edges.length; i--;) {
                 var edge = edges[i];
-                var inter = geo.Edge.getPtIntersection(edge, pt, RAY);
+                var inter = geo.getPtIntersection(edge, pt, RAY);
                 if (inter === null)
                     continue;
                 if (inter < 0)
@@ -407,7 +410,7 @@ var geo;
                         s.points.push(newPt = edge.getInterpolated(inter[0]));
                     }
                     if (alive) {
-                        pushorep(replace, edges, index, new geo.Edge(s, lastIndex, newPtIndex, edge.norm, edge.normC));
+                        pushorep(replace, edges, index, new geo.Edge(s, lastIndex, newPtIndex, edge.norm));
                         ptsFates[lastIndex] = Fate.ALIVE;
                         ptsFates[newPtIndex] = Fate.ALIVE;
                         replace = false;
@@ -416,7 +419,7 @@ var geo;
                     alive = !alive;
                 });
                 if (alive) {
-                    pushorep(replace, edges, index, new geo.Edge(s, lastIndex, edge.ptBIndex, edge.norm, edge.normC));
+                    pushorep(replace, edges, index, new geo.Edge(s, lastIndex, edge.ptBIndex, edge.norm));
                     ptsFates[lastIndex] = Fate.ALIVE;
                     ptsFates[edge.ptBIndex] = Fate.ALIVE;
                 }
@@ -468,20 +471,20 @@ var geo;
                 for (var j = bEdges.length; j--;) {
                     var bEdge = bEdges[j];
                     // cA cB
-                    var inter = geo.Edge.getIntersection(aEdge, bEdge);
+                    var inter = geo.getEdgeIntersection(aEdge, bEdge);
                     if (inter) {
                         inters.push([inter[0], j, bEdge, inter[1], undefined]);
                         aNeeded = bNeeded = false;
                     }
                     a: if (aNeeded) {
-                        var inter_1 = geo.Edge.getPtIntersection(bEdge, ptA, RAY);
+                        var inter_1 = geo.getPtIntersection(bEdge, ptA, RAY);
                         if (inter_1 === null)
                             break a;
                         if (inter_1 < 0)
                             smallerA++;
                     }
                     b: if (bNeeded) {
-                        var inter_2 = geo.Edge.getPtIntersection(bEdge, ptB, RAY);
+                        var inter_2 = geo.getPtIntersection(bEdge, ptB, RAY);
                         if (inter_2 === null)
                             break b;
                         if (inter_2 < 0)
@@ -586,7 +589,7 @@ var geo;
                     bEdgeRefs = ptsEdgeRefs[edge.ptBIndex] = [];
                 bEdgeRefs[edge.ptAIndex] = i;
             }
-            var tmpEdge = new geo.Edge(this, null, null, null, null, new THREE.Vector2());
+            var tmpEdge = new geo.Edge(this, null, null, null, new THREE.Vector2());
             var tmpPt = new THREE.Vector2();
             var _loop_2 = function(ptI) {
                 var pt = pts[ptI];
@@ -615,7 +618,7 @@ var geo;
                             edge.ptBIndex === ptI ||
                             edge.ptBIndex === ptOI)
                             continue edge;
-                        var inter = geo.Edge.getIntersection(tmpEdge, edge);
+                        var inter = geo.getEdgeIntersection(tmpEdge, edge);
                         if (inter !== null)
                             continue ptO;
                     }
@@ -643,6 +646,15 @@ var geo;
                     var ptBI = orderedPtsRefs[(refI + 1) % orderedPtsRefs.length];
                     var edgeAB = edges[ptsEdgeRefs[ptAI][ptBI]];
                     if (!edgeAB)
+                        continue trig;
+                    tmpPt.copy(pts[ptAI]).add(pts[ptBI]).add(pt).divideScalar(3);
+                    if (edgeAB.norm && !edgeAB.isInside(tmpPt))
+                        continue trig;
+                    var edgeA = edges[edgeRefs[ptAI]];
+                    if (edgeA.norm && !edgeA.isInside(tmpPt))
+                        continue trig;
+                    var edgeB = edges[edgeRefs[ptBI]];
+                    if (edgeB.norm && !edgeB.isInside(tmpPt))
                         continue trig;
                     for (var trigRefI = trigRefs.length; trigRefI--;) {
                         var trig_1 = trigs[trigRefs[trigRefI]];
@@ -686,7 +698,7 @@ var geo;
             this.canvas.width = this.canvas.offsetWidth;
             this.canvas.height = this.canvas.offsetHeight;
         };
-        CanvasRenderer.prototype.render = function (shape, shift, trigs) {
+        CanvasRenderer.prototype.render = function (shape, shift, trigs, mouse) {
             var _this = this;
             var pad = 16;
             this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -695,6 +707,8 @@ var geo;
             this.context.lineCap = 'round';
             var ratio = new THREE.Vector2(this.canvas.width - pad * 2, this.canvas.height - pad * 2).divide(shape.size.clone());
             var start = new THREE.Vector2(), end = new THREE.Vector2();
+            if (mouse)
+                mouse.sub(start.set(pad, pad)).divide(ratio).sub(shift);
             var ptA = new THREE.Vector2();
             var ptB = new THREE.Vector2();
             var ptC = new THREE.Vector2();
@@ -713,13 +727,17 @@ var geo;
             shape.edges.forEach(function (edge) {
                 start.copy(edge.getPtA()).add(shift);
                 end.copy(edge.getPtB()).add(shift);
-                _this.context.strokeStyle = 'rgba(0, 0, 255, 0.5)';
-                _this.context.beginPath();
-                _this.context.moveTo(pad + (start.x + end.x) / 2 * ratio.x, pad + (start.y + end.y) / 2 * ratio.y);
-                if (edge.norm)
+                if (edge.norm) {
+                    _this.context.strokeStyle = 'rgba(0, 0, 255, 0.5)';
+                    _this.context.beginPath();
+                    _this.context.moveTo(pad + (start.x + end.x) / 2 * ratio.x, pad + (start.y + end.y) / 2 * ratio.y);
                     _this.context.lineTo(pad + ((start.x + end.x) / 2 + edge.norm.x) * ratio.x, pad + ((start.y + end.y) / 2 + edge.norm.y) * ratio.y);
-                _this.context.stroke();
-                _this.context.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+                    _this.context.stroke();
+                }
+                if (mouse && edge.isInside(mouse))
+                    _this.context.strokeStyle = 'rgba(255, 0, 255, 0.5)';
+                else
+                    _this.context.strokeStyle = 'rgba(255, 0, 0, 0.5)';
                 _this.context.beginPath();
                 _this.context.moveTo(pad + start.x * ratio.x, pad + start.y * ratio.y);
                 _this.context.lineTo(pad + end.x * ratio.x, pad + end.y * ratio.y);
@@ -784,6 +802,8 @@ var input;
             this.buttons = new SubState();
             this.moveX = 0;
             this.moveY = 0;
+            this.mouseX = 0;
+            this.mouseY = 0;
             this.pointerLocked = false;
         }
         State.prototype.finishStep = function () {
@@ -802,6 +822,8 @@ var input;
             this.onmousemove = function (event) {
                 _this.state.moveX += event.movementX | 0;
                 _this.state.moveY += event.movementY | 0;
+                _this.state.mouseX = event.clientX | 0;
+                _this.state.mouseY = event.clientY | 0;
             };
             this.onmousedown = function (event) {
                 var btn = _this.buttonFor(event.button);
@@ -1142,6 +1164,7 @@ composer.addPass(effect);
 /* Geo render */
 var geoRender = new geo.CanvasRenderer();
 //document.body.appendChild(geoRender.canvas);
+var naw = performance.now();
 var shape = geo.Shape.union(geo.Shape.fromDefinitions([
     new THREE.Vector2(2.5, 2.5),
     new THREE.Vector2(5, 0),
@@ -1172,8 +1195,8 @@ var shape = geo.Shape.union(geo.Shape.fromDefinitions([
     [4, 2, false]
 ]));
 var geoShift = shape.recenter();
-var now = performance.now();
 var trigs = shape.triangulate();
+console.log(performance.now() - naw);
 scene.add(new THREE.Mesh(dungeon.render(shape, trigs), new THREE.MultiMaterial([brickMaterial, mortarMaterial])));
 /* Size */
 window.onresize = function (event) {
@@ -1186,7 +1209,6 @@ window.onresize = function (event) {
     renderer.setSize(x, y, false);
     composer.setSize(x, y);
     geoRender.updateSize();
-    geoRender.render(shape, geoShift, trigs);
 };
 window.onresize(null);
 /* Input */
@@ -1217,6 +1239,11 @@ function render() {
         camera.position.add(dir);
         camera.setRotationFromEuler(camControl.euler);
         camLight.position.copy(camera.position);
+        /*geoRender.render(shape, geoShift, trigs,
+            (controls && controls.state) ?
+                new THREE.Vector2(controls.state.mouseX, controls.state.mouseY) :
+                undefined
+        );*/
     });
     composer.render();
     requestAnimationFrame(render);

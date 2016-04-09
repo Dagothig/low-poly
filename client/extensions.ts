@@ -127,7 +127,6 @@ function unprefix(element:any, prop:string, prefixes:string[]) {
             }
         },
         set: function(val) {
-            console.log(val);
             props.forEach(prop => this[prop] = val);
         }
     });

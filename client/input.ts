@@ -40,6 +40,8 @@ module input {
         buttons = new SubState();
         moveX = 0;
         moveY = 0;
+        mouseX = 0;
+        mouseY = 0;
         pointerLocked = false;
 
         finishStep() {
@@ -60,6 +62,8 @@ module input {
         onmousemove = (event: MouseEvent) => {
             this.state.moveX += event.movementX|0;
             this.state.moveY += event.movementY|0;
+            this.state.mouseX = event.clientX|0;
+            this.state.mouseY = event.clientY|0;
         };
         onmousedown = (event: MouseEvent) => {
             var btn = this.buttonFor(event.button);
